@@ -1,0 +1,4 @@
+seed,agent_name,num_jobs,steps_executed,completed_jobs,failed_jobs,completion_rate,failure_rate,total_completed_value,total_compute_cost,avg_compute_cost_per_step,total_utility,completed_all_jobs
+0,Utility-Based Agent (Non-Learning Baseline),20,79,16,4,0.8,0.2,46.87,151.382,1.9162,-16.8828,False
+1,Utility-Based Agent (Non-Learning Baseline),20,76,15,5,0.75,0.25,50.05,117.264,1.5429,-0.8556,False
+2,Utility-Based Agent (Non-Learning Baseline),20,80,10,8,0.5,0.4,33.49,160.132,2.0016,-36.9628,False
