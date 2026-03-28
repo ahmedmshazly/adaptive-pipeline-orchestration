@@ -1,0 +1,63 @@
+{
+  "config": {
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "num_jobs": 20,
+    "max_steps": 80
+  },
+  "reflex_summary": {
+    "agent_name": "Reflex Agent",
+    "num_runs": 3,
+    "num_jobs": 20,
+    "mean_completion_rate": 0.7167,
+    "std_completion_rate": 0.1247,
+    "mean_failure_rate": 0.2833,
+    "std_failure_rate": 0.1247,
+    "mean_total_completed_value": 44.7167,
+    "std_total_completed_value": 6.9432,
+    "mean_total_compute_cost": 155.4347,
+    "std_total_compute_cost": 30.2321,
+    "mean_avg_compute_cost_per_step": 2.146,
+    "std_avg_compute_cost_per_step": 0.5626,
+    "mean_total_utility": -21.9905,
+    "std_total_utility": 19.964,
+    "mean_steps_executed": 73.6667,
+    "std_steps_executed": 5.5578,
+    "all_jobs_completed_runs": 0,
+    "mean_completed_jobs": 14.3333,
+    "mean_failed_jobs": 5.6667
+  },
+  "utility_summary": {
+    "agent_name": "Utility-Based Agent (Non-Learning Baseline)",
+    "num_runs": 3,
+    "num_jobs": 20,
+    "mean_completion_rate": 0.6833,
+    "std_completion_rate": 0.1312,
+    "mean_failure_rate": 0.2833,
+    "std_failure_rate": 0.085,
+    "mean_total_completed_value": 43.47,
+    "std_total_completed_value": 7.1753,
+    "mean_total_compute_cost": 142.926,
+    "std_total_compute_cost": 18.494,
+    "mean_avg_compute_cost_per_step": 1.8203,
+    "std_avg_compute_cost_per_step": 0.1992,
+    "mean_total_utility": -18.2337,
+    "std_total_utility": 14.7716,
+    "mean_steps_executed": 78.3333,
+    "std_steps_executed": 1.6997,
+    "all_jobs_completed_runs": 0,
+    "mean_completed_jobs": 13.6667,
+    "mean_failed_jobs": 5.6667
+  },
+  "comparison": {
+    "utility_total_utility_wins": 1,
+    "reflex_total_utility_wins": 1,
+    "ties_total_utility": 1,
+    "utility_better_completion_runs": 0,
+    "utility_lower_cost_runs": 2,
+    "num_head_to_head_runs": 3
+  }
+}

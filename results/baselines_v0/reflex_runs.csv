@@ -1,0 +1,4 @@
+seed,agent_name,num_jobs,steps_executed,completed_jobs,failed_jobs,completion_rate,failure_rate,total_completed_value,total_compute_cost,avg_compute_cost_per_step,total_utility,completed_all_jobs
+0,Reflex Agent,20,79,17,3,0.85,0.15,49.19,157.84,1.998,-16.346,False
+1,Reflex Agent,20,76,15,5,0.75,0.25,50.05,117.264,1.5429,-0.8556,False
+2,Reflex Agent,20,66,11,9,0.55,0.45,34.91,191.2,2.897,-48.77,False
