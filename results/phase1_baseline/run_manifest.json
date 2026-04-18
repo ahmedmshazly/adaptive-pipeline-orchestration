@@ -1,0 +1,37 @@
+{
+  "commit_sha": "ff87e609d18f3a78c2ad04aa752d726ae4898e54",
+  "config_hash": "a8a5dd78dc96edda4cf0de291f3c9dcd6e17b24b84e5d6e32fae28eaf51d0f7c",
+  "extra": {
+    "entrypoint": "compare_baselines",
+    "seed_group": "midterm_baseline"
+  },
+  "git_dirty": true,
+  "hostname": "cursor",
+  "library_versions": {
+    "matplotlib": "3.10.8",
+    "numpy": "2.4.4",
+    "pytest": "9.0.3",
+    "python": "3.12.3",
+    "scipy": "1.17.1",
+    "yaml": "6.0.1"
+  },
+  "platform": "Linux-6.12.58+-x86_64-with-glibc2.39",
+  "run_id": "phase1_baseline",
+  "seed_list": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "wall_clock": {
+    "elapsed_seconds": 10.694,
+    "end": "2026-04-18T21:37:19.141909+00:00",
+    "start": "2026-04-18T21:37:08.456286+00:00"
+  }
+}
