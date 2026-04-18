@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Dict
 
 from .config import RunConfig
+from .cost import step_cost as _step_cost
 from .sim_environment import EpisodeState
 
 
@@ -76,12 +77,12 @@ class EpisodeMetrics:
 
 
 def estimate_step_cost(state: EpisodeState) -> float:
-    """Operational cost for the current step (config-driven)."""
-    cost_cfg = state.cfg.simulator.cost
-    usage = (cost_cfg.cpu_weight * state.cpu_in_use()) + (
-        cost_cfg.ram_weight * state.ram_in_use()
-    )
-    return state.cluster.spot_price * usage
+    """Operational cost for the current step.
+
+    Thin shim over :func:`src.cost.step_cost` kept for backward compatibility
+    with call sites that predate the explicit cost module.
+    """
+    return _step_cost(state)
 
 
 def summarize_episode(
