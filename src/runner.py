@@ -21,7 +21,8 @@ from typing import Callable, List, Protocol
 import numpy as np
 
 from .config import RunConfig
-from .metrics import EpisodeMetrics, estimate_step_cost, summarize_episode
+from .cost import cost as cost_fn
+from .metrics import EpisodeMetrics, summarize_episode
 from .sim_environment import (
     EpisodeState,
     WorkloadGenerator,
@@ -55,7 +56,10 @@ def _simulate(
     while not state.all_done() and state.step < max_steps:
         action = agent.choose_action(state)
         advance_one_step(state, event_rng, action)
-        total_compute_cost += estimate_step_cost(state)
+        # Cost is accumulated post-step so step_cost reflects the applied
+        # action's effect on resource usage; action_cost tariffs are added
+        # by cost_fn (zero by default in Phase 1).
+        total_compute_cost += cost_fn(state, action)
 
     hit_budget = (not state.all_done()) and state.step >= max_steps
     return state, total_compute_cost, hit_budget
