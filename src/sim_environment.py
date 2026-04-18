@@ -1,31 +1,33 @@
 from __future__ import annotations
 
-"""Core simulation environment for the orchestration project.
+"""Core simulation environment.
 
-This module defines a stochastic world for adaptive data-pipeline
-orchestration. Every numeric parameter it uses comes from a ``RunConfig``
-produced by :mod:`src.config`; this module contains no magic numbers.
+Every numeric parameter here comes from a ``RunConfig`` produced by
+:mod:`src.config`. This module contains no magic numbers.
 
 Randomness discipline:
 - Every random draw goes through a named ``numpy.random.Generator``.
-- Generators are constructed from a deterministic
-  ``numpy.random.SeedSequence`` in :func:`make_episode_rngs`, so a single
-  integer seed reproduces both the workload generator's draws and the event
-  loop's draws independently.
+- Generators are constructed from ``numpy.random.SeedSequence`` in
+  :func:`make_episode_rngs`, so a single integer seed reproduces both the
+  workload generator's draws and the event loop's draws independently.
+
+Action semantics are encoded in ``cfg.simulator.action_params``; stochastic
+process semantics are encoded in ``cfg.simulator.stochastic_processes``.
+See ``SPECIFICATION.md`` §2–§3 for the full spec.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Final, List, Optional, Sequence, Tuple
+from typing import Dict, Final, List, Optional, Tuple
 
 import numpy as np
 
 from .config import RunConfig, SimulatorConfig, load_config
+from .state import StateVector
 
 
 # ---------------------------------------------------------------------------
-# Action space (structural; the action *names* are part of the problem
-# specification). Numeric parameters governing action semantics live in
-# ``cfg.simulator.actions_config`` and ``cfg.simulator.cluster``.
+# Action-name constants (the names are structural; every numeric parameter
+# that governs action semantics lives in cfg.simulator.action_params).
 # ---------------------------------------------------------------------------
 ACTIONS: Final[Tuple[str, ...]] = (
     "Execute_Ready_Job",
@@ -92,12 +94,10 @@ class JobInstance:
             self.failed = True
             self.completed = False
             return
-
         if all(task.state == TASK_STATE_COMPLETED for task in self.tasks.values()):
             self.completed = True
             self.failed = False
             return
-
         self.failed = False
         self.completed = False
 
@@ -117,6 +117,11 @@ class ClusterState:
     spot_price: float
     scale_boost_remaining: int = 0
     recent_failures: int = 0
+    # Record the (cpu_delta, ram_delta) actually applied by the most recent
+    # Scale_Up so that the decay tick can subtract exactly that amount. This
+    # decouples decay from cfg defaults in case action parameters change.
+    last_scale_up_cpu_delta: int = 0
+    last_scale_up_ram_delta: int = 0
 
 
 @dataclass
@@ -161,7 +166,12 @@ class EpisodeState:
     def all_done(self) -> bool:
         return all(job.failed or job.completed for job in self.jobs)
 
-    def state_vector(self) -> Dict[str, float]:
+    def state_vector(self) -> StateVector:
+        """Return the observation as a typed :class:`~src.state.StateVector`.
+
+        The numeric values match the midterm's ``dict[str, float]``
+        observation exactly (same rounding, same clipping).
+        """
         ready = self.ready_tasks()
         active_jobs = [job for job in self.jobs if not job.failed and not job.completed]
         sv = self.cfg.simulator.state_vector
@@ -177,23 +187,22 @@ class EpisodeState:
             avg_priority = 0.0
             avg_urgency = 0.0
 
-        return {
-            "CPU_Load": round(self.cpu_in_use() / max(self.cluster.cpu_capacity, 1), 4),
-            "RAM_Available": round(self.available_ram() / max(self.cluster.ram_capacity, 1), 4),
-            "Queue_Depth": min(self.queue_depth() / sv.queue_depth_norm, 1.0),
-            "Spot_Price": round(self.cluster.spot_price, 4),
-            "DAG_Ready_Nodes": min(len(ready) / sv.ready_nodes_norm, 1.0),
-            "Job_Priority": round(avg_priority, 4),
-            "Deadline_Urgency": round(avg_urgency, 4),
-            "Recent_Failures": min(self.cluster.recent_failures / sv.recent_failures_norm, 1.0),
-        }
+        return StateVector(
+            cpu_load=round(self.cpu_in_use() / max(self.cluster.cpu_capacity, 1), 4),
+            ram_available=round(self.available_ram() / max(self.cluster.ram_capacity, 1), 4),
+            queue_depth=min(self.queue_depth() / sv.queue_depth_norm, 1.0),
+            spot_price=round(self.cluster.spot_price, 4),
+            dag_ready_nodes=min(len(ready) / sv.ready_nodes_norm, 1.0),
+            job_priority=round(avg_priority, 4),
+            deadline_urgency=round(avg_urgency, 4),
+            recent_failures=min(self.cluster.recent_failures / sv.recent_failures_norm, 1.0),
+        )
 
 
 # ---------------------------------------------------------------------------
 # Template instantiation from config
 # ---------------------------------------------------------------------------
 def build_templates(sim_cfg: SimulatorConfig) -> Tuple[DAGTemplate, ...]:
-    """Convert config DAG specs into immutable runtime templates."""
     templates: List[DAGTemplate] = []
     for template_spec in sim_cfg.dag_templates:
         tasks = tuple(
@@ -213,12 +222,10 @@ def build_templates(sim_cfg: SimulatorConfig) -> Tuple[DAGTemplate, ...]:
 # ---------------------------------------------------------------------------
 # Episode RNG discipline
 # ---------------------------------------------------------------------------
-def make_episode_rngs(
-    seed: int,
-) -> Tuple[np.random.Generator, np.random.Generator]:
+def make_episode_rngs(seed: int) -> Tuple[np.random.Generator, np.random.Generator]:
     """Spawn two independent generators from a single integer seed.
 
-    The returned pair is ``(workload_rng, event_rng)``. They are derived via
+    Returns ``(workload_rng, event_rng)``. They are derived via
     ``numpy.random.SeedSequence`` so a run is fully reproducible from one
     integer seed without entangling workload generation with event streams.
     """
@@ -325,76 +332,155 @@ class WorkloadGenerator:
 
 
 # ---------------------------------------------------------------------------
-# Environment dynamics
+# Stochastic processes — one function per process, dispatched by mode.
 # ---------------------------------------------------------------------------
-def apply_random_events(
-    state: EpisodeState,
-    rng: np.random.Generator,
-) -> None:
-    """Apply exogenous events after action/progress for the current step."""
-    events = state.cfg.simulator.events
-    cluster_cfg = state.cfg.simulator.cluster
+def _apply_spot_price_walk(state: EpisodeState, rng: np.random.Generator) -> None:
+    """Bounded random walk on ``cluster.spot_price``.
 
-    walk = float(rng.uniform(events.spot_price_walk_low, events.spot_price_walk_high))
+    Formula: ``Δ ∼ U(walk_low, walk_high)``; ``spot_price = clip(round(price + Δ,
+    2), price_min, price_max)``.
+    """
+    config = state.cfg.simulator.stochastic_processes.spot_price
+    if config.mode != "bounded_random_walk":
+        raise ValueError(f"unknown spot_price mode: {config.mode}")
+    walk = float(rng.uniform(config.walk_low, config.walk_high))
     state.cluster.spot_price = min(
-        events.spot_price_max,
-        max(events.spot_price_min, round(state.cluster.spot_price + walk, 2)),
+        config.price_max,
+        max(config.price_min, round(state.cluster.spot_price + walk, 2)),
     )
 
-    if state.running_tasks and rng.random() < events.node_failure_prob:
+
+def _apply_node_failure(state: EpisodeState, rng: np.random.Generator) -> None:
+    """Apply the ``Node_Failure`` stochastic process.
+
+    Two modes:
+    - ``per_step_single_victim`` (Phase-1 default): one uniform ``U(0,1)``
+      draw per step; if below ``prob`` and at least one task is running,
+      exactly one running task is killed.
+    - ``per_node_bernoulli``: an independent Bernoulli(``prob``) draw per
+      running task; every losing task is killed in the same step.
+    """
+    config = state.cfg.simulator.stochastic_processes.node_failure
+    cluster_cfg = state.cfg.simulator.cluster
+    if config.mode == "per_step_single_victim":
+        if not state.running_tasks:
+            return
+        if rng.random() >= config.prob:
+            return
         running_ids = list(state.running_tasks.keys())
         victim_index = int(rng.integers(low=0, high=len(running_ids)))
-        victim_id = running_ids[victim_index]
-        state.running_tasks.pop(victim_id)
-        job_id_str, task_id = victim_id.split(":")
-        job_id = int(job_id_str.replace("job", ""))
-        job = state.jobs[job_id]
-        job.tasks[task_id].state = TASK_STATE_FAILED
-        job.update_status()
-        state.cluster.recent_failures = min(
-            state.cluster.recent_failures + 1,
-            cluster_cfg.max_recent_failures,
+        _kill_running_task(state, running_ids[victim_index], cluster_cfg.max_recent_failures)
+    elif config.mode == "per_node_bernoulli":
+        if not state.running_tasks:
+            return
+        # Snapshot now so victims picked this step don't race against each
+        # other via dict mutation.
+        running_ids = list(state.running_tasks.keys())
+        for full_id in running_ids:
+            if rng.random() < config.prob:
+                _kill_running_task(state, full_id, cluster_cfg.max_recent_failures)
+    else:
+        raise ValueError(f"unknown node_failure mode: {config.mode}")
+
+
+def _kill_running_task(state: EpisodeState, full_id: str, recent_failures_cap: int) -> None:
+    if full_id not in state.running_tasks:
+        return
+    state.running_tasks.pop(full_id)
+    job_id_str, task_id = full_id.split(":")
+    job_id = int(job_id_str.replace("job", ""))
+    job = state.jobs[job_id]
+    job.tasks[task_id].state = TASK_STATE_FAILED
+    job.update_status()
+    state.cluster.recent_failures = min(
+        state.cluster.recent_failures + 1,
+        recent_failures_cap,
+    )
+    state.event_log.append(f"step={state.step}: node_failure->{full_id}")
+
+
+def _apply_data_spike(state: EpisodeState, rng: np.random.Generator) -> None:
+    """Apply the ``Data_Spike`` stochastic process.
+
+    Two modes:
+    - ``additive_bump`` (Phase-1 default): for ``k ∈ [min_tasks, max_tasks]``
+      randomly chosen pending tasks, ``remaining_time += duration_bump`` and
+      ``cpu_demand = min(cpu_demand + cpu_bump, cpu_cap)``.
+    - ``multiplicative_10x`` (documented, not active by default): scales
+      ``remaining_time`` and ``cpu_demand`` by ``multiplier`` on up to
+      ``max_tasks`` pending tasks; ``cpu_demand`` is still clamped to
+      ``cpu_cap``. ``duration_steps`` is reserved for a future extension
+      where subsequently spawned tasks inherit the inflated demand.
+    """
+    config = state.cfg.simulator.stochastic_processes.data_spike
+    if rng.random() >= config.prob:
+        return
+
+    candidates = [
+        task
+        for job in state.jobs
+        for task in job.tasks.values()
+        if task.state in {TASK_STATE_WAITING, TASK_STATE_READY}
+    ]
+    if not candidates:
+        return
+
+    lo = max(1, min(config.min_tasks, len(candidates)))
+    hi_exclusive = min(config.max_tasks, len(candidates)) + 1
+    if hi_exclusive <= lo:
+        hi_exclusive = lo + 1
+    affected_count = int(rng.integers(low=lo, high=hi_exclusive))
+    affected_count = max(1, min(affected_count, len(candidates)))
+
+    indices = rng.choice(len(candidates), size=affected_count, replace=False)
+    chosen = [candidates[int(index)] for index in np.atleast_1d(indices)]
+
+    if config.mode == "additive_bump":
+        for task in chosen:
+            task.remaining_time += config.duration_bump
+            task.cpu_demand = min(task.cpu_demand + config.cpu_bump, config.cpu_cap)
+    elif config.mode == "multiplicative_10x":
+        for task in chosen:
+            task.remaining_time = int(task.remaining_time * config.multiplier)
+            task.cpu_demand = min(
+                int(task.cpu_demand * config.multiplier),
+                config.cpu_cap,
+            )
+    else:
+        raise ValueError(f"unknown data_spike mode: {config.mode}")
+
+    state.event_log.append(f"step={state.step}: data_spike->{affected_count}_tasks")
+
+
+def _apply_scale_boost_decay(state: EpisodeState) -> None:
+    cluster_cfg = state.cfg.simulator.cluster
+    if state.cluster.scale_boost_remaining <= 0:
+        return
+    state.cluster.scale_boost_remaining -= 1
+    if state.cluster.scale_boost_remaining == 0:
+        state.cluster.cpu_capacity = max(
+            state.cluster.cpu_capacity - state.cluster.last_scale_up_cpu_delta,
+            cluster_cfg.base_cpu_capacity,
         )
-        state.event_log.append(f"step={state.step}: node_failure->{victim_id}")
-
-    if rng.random() < events.data_spike_prob:
-        candidates = [
-            task
-            for job in state.jobs
-            for task in job.tasks.values()
-            if task.state in {TASK_STATE_WAITING, TASK_STATE_READY}
-        ]
-        if candidates:
-            hi = min(len(candidates), events.data_spike_max_tasks) + 1
-            lo = min(events.data_spike_min_tasks, max(1, len(candidates)))
-            hi = max(hi, lo + 1)
-            affected_count = int(rng.integers(low=lo, high=hi))
-            affected_count = max(1, min(affected_count, len(candidates)))
-            chosen_indices = rng.choice(
-                len(candidates), size=affected_count, replace=False
-            )
-            for idx in np.atleast_1d(chosen_indices):
-                task = candidates[int(idx)]
-                task.remaining_time += events.data_spike_duration_bump
-                task.cpu_demand = min(
-                    task.cpu_demand + events.data_spike_cpu_bump,
-                    events.data_spike_cpu_cap,
-                )
-            state.event_log.append(f"step={state.step}: data_spike->{affected_count}_tasks")
-
-    if state.cluster.scale_boost_remaining > 0:
-        state.cluster.scale_boost_remaining -= 1
-        if state.cluster.scale_boost_remaining == 0:
-            state.cluster.cpu_capacity = max(
-                state.cluster.cpu_capacity - cluster_cfg.scale_up_cpu_boost,
-                cluster_cfg.base_cpu_capacity,
-            )
-            state.cluster.ram_capacity = max(
-                state.cluster.ram_capacity - cluster_cfg.scale_up_ram_boost,
-                cluster_cfg.base_ram_capacity,
-            )
+        state.cluster.ram_capacity = max(
+            state.cluster.ram_capacity - state.cluster.last_scale_up_ram_delta,
+            cluster_cfg.base_ram_capacity,
+        )
+        state.cluster.last_scale_up_cpu_delta = 0
+        state.cluster.last_scale_up_ram_delta = 0
 
 
+def apply_random_events(state: EpisodeState, rng: np.random.Generator) -> None:
+    """Apply every exogenous event after action/progress for the step."""
+    _apply_spot_price_walk(state, rng)
+    _apply_node_failure(state, rng)
+    _apply_data_spike(state, rng)
+    _apply_scale_boost_decay(state)
+
+
+# ---------------------------------------------------------------------------
+# Task lifecycle
+# ---------------------------------------------------------------------------
 def launch_task(state: EpisodeState, task: TaskInstance) -> bool:
     if task.state != TASK_STATE_READY:
         return False
@@ -427,20 +513,28 @@ def progress_running_tasks(state: EpisodeState) -> None:
     state.cluster.recent_failures = max(state.cluster.recent_failures - 1, 0)
 
 
+# ---------------------------------------------------------------------------
+# Action dispatch
+# ---------------------------------------------------------------------------
 def _execute_ranking_key(state: EpisodeState, task: TaskInstance) -> float:
-    ranking = state.cfg.simulator.actions_config.execute_ranking
+    policy = state.cfg.simulator.action_params.execute_ready_job.selection_policy
     job = state.jobs[task.job_id]
-    if ranking == "value":
+    if policy == "value":
         return job.value
-    if ranking == "value_times_priority":
+    if policy == "value_times_priority":
         return job.value * job.priority
-    raise ValueError(f"Unknown execute_ranking: {ranking}")
+    raise ValueError(f"Unknown selection_policy: {policy}")
 
 
 def do_action(state: EpisodeState, action: str) -> Optional[str]:
-    """Apply one orchestration action; returns a short debug label."""
+    """Apply one orchestration action.
+
+    Each action consumes a named parameter set from
+    ``cfg.simulator.action_params``. See ``SPECIFICATION.md`` §2 for the
+    committed semantics.
+    """
     ready = state.ready_tasks()
-    actions_cfg = state.cfg.simulator.actions_config
+    params = state.cfg.simulator.action_params
     cluster_cfg = state.cfg.simulator.cluster
 
     if action not in ACTIONS:
@@ -449,30 +543,48 @@ def do_action(state: EpisodeState, action: str) -> Optional[str]:
     if action == "Execute_Ready_Job":
         if not ready:
             return "no_ready_job"
-        ranked = sorted(
-            ready, key=lambda t: _execute_ranking_key(state, t), reverse=True
-        )
-        chosen = ranked[0]
-        launched = launch_task(state, chosen)
-        return f"launched:{chosen.full_id()}" if launched else "insufficient_resources"
+        ranked = sorted(ready, key=lambda t: _execute_ranking_key(state, t), reverse=True)
+        max_launches = params.execute_ready_job.max_launches_per_step
+        # Try the top `max_launches` candidates in priority order. If a
+        # candidate doesn't fit we stop — matching the midterm semantics of
+        # "launch the best task or declare blocked". This preserves
+        # behaviour for max_launches=1 (single top task) and naturally
+        # generalises to max_launches>1 without switching to greedy
+        # packing.
+        launched_ids: List[str] = []
+        for candidate in ranked[:max_launches]:
+            if launch_task(state, candidate):
+                launched_ids.append(candidate.full_id())
+            else:
+                break
+        if launched_ids:
+            return "launched:" + ",".join(launched_ids)
+        return "insufficient_resources"
 
     if action == "Defer_Job":
+        # duration_steps is honoured structurally: the runner calls
+        # do_action once per step, so a duration of N means the caller chose
+        # Defer_Job N times. We keep the parameter here so a future runner
+        # or RL variant can consume it directly.
+        _ = params.defer_job.duration_steps
         return "deferred"
 
     if action == "Scale_Up":
-        state.cluster.cpu_capacity += cluster_cfg.scale_up_cpu_boost
-        state.cluster.ram_capacity += cluster_cfg.scale_up_ram_boost
-        state.cluster.scale_boost_remaining = cluster_cfg.scale_boost_duration
+        state.cluster.cpu_capacity += params.scale_up.cpu_delta
+        state.cluster.ram_capacity += params.scale_up.ram_delta
+        state.cluster.scale_boost_remaining = params.scale_up.duration_steps
+        state.cluster.last_scale_up_cpu_delta = params.scale_up.cpu_delta
+        state.cluster.last_scale_up_ram_delta = params.scale_up.ram_delta
         return "scaled_up"
 
     if action == "Scale_Down":
         state.cluster.cpu_capacity = max(
             cluster_cfg.min_cpu_capacity,
-            state.cluster.cpu_capacity - cluster_cfg.scale_down_cpu_step,
+            state.cluster.cpu_capacity - params.scale_down.cpu_delta,
         )
         state.cluster.ram_capacity = max(
             cluster_cfg.min_ram_capacity,
-            state.cluster.ram_capacity - cluster_cfg.scale_down_ram_step,
+            state.cluster.ram_capacity - params.scale_down.ram_delta,
         )
         return "scaled_down"
 
@@ -480,7 +592,7 @@ def do_action(state: EpisodeState, action: str) -> Optional[str]:
         for job in state.jobs:
             if not job.completed and not job.failed:
                 job.priority = round(
-                    min(actions_cfg.reprioritize_cap, job.priority + actions_cfg.reprioritize_bump),
+                    min(params.reprioritize_queue.cap, job.priority + params.reprioritize_queue.bump),
                     2,
                 )
         return "reprioritized"
@@ -491,10 +603,10 @@ def do_action(state: EpisodeState, action: str) -> Optional[str]:
             for job in state.jobs
             if not job.completed
             and not job.failed
-            and job.priority < actions_cfg.pause_priority_threshold
+            and job.priority < params.pause_low_priority_job.priority_threshold
         ]
         paused_jobs = 0
-        for job in low_priority_jobs[: actions_cfg.pause_max_jobs]:
+        for job in low_priority_jobs[: params.pause_low_priority_job.max_jobs]:
             for task in job.tasks.values():
                 if task.state == TASK_STATE_READY:
                     task.state = TASK_STATE_PAUSED
@@ -539,7 +651,7 @@ def _demo() -> None:
     environment = generator.generate_episode()
 
     print("Initial state vector:")
-    print(environment.state_vector())
+    print(environment.state_vector().as_dict())
     print(f"ready_tasks={environment.queue_depth()}")
 
     for index in range(5):
@@ -547,7 +659,7 @@ def _demo() -> None:
         print(f"step_info[{index}]={step_info}")
 
     print("Final partial state vector:")
-    print(environment.state_vector())
+    print(environment.state_vector().as_dict())
     print(f"events={environment.event_log[:5]}")
 
 

@@ -155,7 +155,7 @@ class UtilityBasedAgent:
             for job in state.jobs
             if not job.completed
             and not job.failed
-            and job.priority < self.cfg.simulator.actions_config.pause_priority_threshold
+            and job.priority < self.cfg.simulator.action_params.pause_low_priority_job.priority_threshold
         )
         if active_low == 0:
             return self.w.no_low_priority_work_penalty
