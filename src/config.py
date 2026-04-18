@@ -2,25 +2,22 @@ from __future__ import annotations
 
 """Typed configuration loader for the orchestration project.
 
-This module is the single Python entry point for reading ``config/default.yaml``
-(or any override). The goals are:
+Reads ``config/default.yaml`` (or any override) into immutable dataclasses.
+Every consumer module (env, agents, drivers) receives a ``RunConfig`` and
+does not touch YAML or magic numbers of its own.
 
-1. No consumer code (env, agents, drivers) reads YAML directly.
-2. Every constant the simulator or an agent uses is reachable through the
-   ``RunConfig`` object returned by :func:`load_config`.
-3. The resolved configuration can be rewritten verbatim and hashed for the
-   run manifest, so that (commit SHA, config hash, seed list) uniquely
-   identifies a run.
+The loader also produces a stable sha256 hash of the canonical YAML dump so
+``(commit SHA, config hash, seed list)`` uniquely identifies a run.
 
-The loader intentionally avoids pydantic / attrs to keep the dependency set
-small. The dataclasses below are faithful 1:1 mirrors of the YAML sections.
+Structure of the resolved schema is documented in SPECIFICATION.md and in
+``config/default.yaml`` itself.
 """
 
 from dataclasses import dataclass, field
 import hashlib
 import io
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 import yaml
 
@@ -30,7 +27,98 @@ DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "default.yaml"
 
 
 # ---------------------------------------------------------------------------
-# Dataclasses (1:1 mirror of config/default.yaml)
+# Action parameters — one dataclass per action.
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ExecuteReadyJobParams:
+    selection_policy: str
+    max_launches_per_step: int
+
+
+@dataclass(frozen=True)
+class DeferJobParams:
+    duration_steps: int
+
+
+@dataclass(frozen=True)
+class ScaleUpParams:
+    cpu_delta: int
+    ram_delta: int
+    duration_steps: int
+
+
+@dataclass(frozen=True)
+class ScaleDownParams:
+    cpu_delta: int
+    ram_delta: int
+
+
+@dataclass(frozen=True)
+class ReprioritizeQueueParams:
+    bump: float
+    cap: float
+
+
+@dataclass(frozen=True)
+class PauseLowPriorityJobParams:
+    priority_threshold: float
+    max_jobs: int
+
+
+@dataclass(frozen=True)
+class ActionParams:
+    """Container for per-action parameter sets.
+
+    Access pattern: ``cfg.simulator.action_params.scale_up.cpu_delta``.
+    """
+    execute_ready_job: ExecuteReadyJobParams
+    defer_job: DeferJobParams
+    scale_up: ScaleUpParams
+    scale_down: ScaleDownParams
+    reprioritize_queue: ReprioritizeQueueParams
+    pause_low_priority_job: PauseLowPriorityJobParams
+
+
+# ---------------------------------------------------------------------------
+# Stochastic processes
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class NodeFailureConfig:
+    mode: str          # "per_step_single_victim" | "per_node_bernoulli"
+    prob: float
+
+
+@dataclass(frozen=True)
+class DataSpikeConfig:
+    mode: str          # "additive_bump" | "multiplicative_10x"
+    prob: float
+    min_tasks: int
+    max_tasks: int
+    duration_bump: int
+    cpu_bump: int
+    cpu_cap: int
+    multiplier: int
+    duration_steps: int
+
+
+@dataclass(frozen=True)
+class SpotPriceConfig:
+    mode: str          # "bounded_random_walk"
+    walk_low: float
+    walk_high: float
+    price_min: float
+    price_max: float
+
+
+@dataclass(frozen=True)
+class StochasticProcessesConfig:
+    node_failure: NodeFailureConfig
+    data_spike: DataSpikeConfig
+    spot_price: SpotPriceConfig
+
+
+# ---------------------------------------------------------------------------
+# Cluster / cost / state vector / workload / DAG
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ClusterConfig:
@@ -38,10 +126,6 @@ class ClusterConfig:
     base_ram_capacity: int
     min_cpu_capacity: int
     min_ram_capacity: int
-    scale_up_cpu_boost: int
-    scale_up_ram_boost: int
-    scale_down_cpu_step: int
-    scale_down_ram_step: int
     scale_boost_duration: int
     max_recent_failures: int
     initial_spot_price_low: float
@@ -49,24 +133,10 @@ class ClusterConfig:
 
 
 @dataclass(frozen=True)
-class EventsConfig:
-    node_failure_prob: float
-    data_spike_prob: float
-    data_spike_min_tasks: int
-    data_spike_max_tasks: int
-    data_spike_duration_bump: int
-    data_spike_cpu_bump: int
-    data_spike_cpu_cap: int
-    spot_price_walk_low: float
-    spot_price_walk_high: float
-    spot_price_min: float
-    spot_price_max: float
-
-
-@dataclass(frozen=True)
 class CostConfig:
     cpu_weight: float
     ram_weight: float
+    action_costs: Mapping[str, float]
 
 
 @dataclass(frozen=True)
@@ -74,15 +144,6 @@ class StateVectorConfig:
     queue_depth_norm: float
     ready_nodes_norm: float
     recent_failures_norm: float
-
-
-@dataclass(frozen=True)
-class ActionsConfig:
-    execute_ranking: str
-    reprioritize_bump: float
-    reprioritize_cap: float
-    pause_priority_threshold: float
-    pause_max_jobs: int
 
 
 @dataclass(frozen=True)
@@ -117,19 +178,23 @@ class DAGTemplateSpec:
 class SimulatorConfig:
     actions: Tuple[str, ...]
     cluster: ClusterConfig
-    events: EventsConfig
+    action_params: ActionParams
+    stochastic_processes: StochasticProcessesConfig
     cost: CostConfig
     state_vector: StateVectorConfig
-    actions_config: ActionsConfig
     workload: WorkloadConfig
     dag_templates: Tuple[DAGTemplateSpec, ...]
 
 
+# ---------------------------------------------------------------------------
+# Utility / agents / experiment / RL / sweep / seeds
+# ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class UtilityWeights:
     alpha: float
     beta: float
     gamma: float
+    midterm_values: Mapping[str, float]
 
 
 @dataclass(frozen=True)
@@ -267,7 +332,7 @@ class SweepConfig:
 
 @dataclass(frozen=True)
 class RunConfig:
-    meta: Dict[str, Any]
+    meta: Mapping[str, Any]
     experiment: ExperimentConfig
     seeds: SeedsConfig
     simulator: SimulatorConfig
@@ -276,14 +341,14 @@ class RunConfig:
     utility_agent: UtilityAgentConfig
     rl: RLConfig
     sweep: SweepConfig
-    raw: Dict[str, Any] = field(repr=False)
+    raw: Mapping[str, Any] = field(repr=False)
 
     def config_hash(self) -> str:
         """Stable sha256 over the resolved config (sorted-key YAML dump)."""
         return sha256_of_resolved(self.raw)
 
     def resolved_yaml(self) -> str:
-        """Return the canonical YAML form of the resolved config."""
+        """Canonical YAML form of the resolved config."""
         return _canonical_yaml_dump(self.raw)
 
 
@@ -298,12 +363,42 @@ def _as_tuple(value: Any) -> Tuple[Any, ...]:
     return tuple(value)
 
 
-def _parse_simulator(raw: Dict[str, Any]) -> SimulatorConfig:
+def _parse_action_params(raw: Mapping[str, Any]) -> ActionParams:
+    return ActionParams(
+        execute_ready_job=ExecuteReadyJobParams(**raw["Execute_Ready_Job"]),
+        defer_job=DeferJobParams(**raw["Defer_Job"]),
+        scale_up=ScaleUpParams(**raw["Scale_Up"]),
+        scale_down=ScaleDownParams(**raw["Scale_Down"]),
+        reprioritize_queue=ReprioritizeQueueParams(**raw["Reprioritize_Queue"]),
+        pause_low_priority_job=PauseLowPriorityJobParams(**raw["Pause_LowPriority_Job"]),
+    )
+
+
+def _parse_stochastic_processes(raw: Mapping[str, Any]) -> StochasticProcessesConfig:
+    return StochasticProcessesConfig(
+        node_failure=NodeFailureConfig(**raw["node_failure"]),
+        data_spike=DataSpikeConfig(**raw["data_spike"]),
+        spot_price=SpotPriceConfig(**raw["spot_price"]),
+    )
+
+
+def _parse_cost(raw: Mapping[str, Any]) -> CostConfig:
+    return CostConfig(
+        cpu_weight=float(raw["cpu_weight"]),
+        ram_weight=float(raw["ram_weight"]),
+        action_costs={
+            str(key): float(value) for key, value in dict(raw["action_costs"]).items()
+        },
+    )
+
+
+def _parse_simulator(raw: Mapping[str, Any]) -> SimulatorConfig:
     cluster = ClusterConfig(**raw["cluster"])
-    events = EventsConfig(**raw["events"])
-    cost = CostConfig(**raw["cost"])
+    action_params = _parse_action_params(raw["action_params"])
+    stochastic_processes = _parse_stochastic_processes(raw["stochastic_processes"])
+    cost = _parse_cost(raw["cost"])
     state_vec = StateVectorConfig(**raw["state_vector"])
-    actions_cfg = ActionsConfig(**raw["actions_config"])
+
     workload_raw = dict(raw["workload"])
     workload = WorkloadConfig(
         duration_factors=_as_tuple(workload_raw.pop("duration_factors")),
@@ -312,10 +407,10 @@ def _parse_simulator(raw: Dict[str, Any]) -> SimulatorConfig:
         **workload_raw,
     )
 
-    templates: List[DAGTemplateSpec] = []
-    for tpl in raw["dag_templates"]:
-        task_specs: List[DAGTaskSpec] = []
-        for entry in tpl["tasks"]:
+    templates = []
+    for template_raw in raw["dag_templates"]:
+        task_specs = []
+        for entry in template_raw["tasks"]:
             task_id, parents, base_duration, cpu_demand, ram_demand = entry
             task_specs.append(
                 DAGTaskSpec(
@@ -326,21 +421,23 @@ def _parse_simulator(raw: Dict[str, Any]) -> SimulatorConfig:
                     ram_demand=int(ram_demand),
                 )
             )
-        templates.append(DAGTemplateSpec(name=str(tpl["name"]), tasks=tuple(task_specs)))
+        templates.append(
+            DAGTemplateSpec(name=str(template_raw["name"]), tasks=tuple(task_specs))
+        )
 
     return SimulatorConfig(
         actions=_as_tuple(raw["actions"]),
         cluster=cluster,
-        events=events,
+        action_params=action_params,
+        stochastic_processes=stochastic_processes,
         cost=cost,
         state_vector=state_vec,
-        actions_config=actions_cfg,
         workload=workload,
         dag_templates=tuple(templates),
     )
 
 
-def _parse_rl(raw: Dict[str, Any]) -> RLConfig:
+def _parse_rl(raw: Mapping[str, Any]) -> RLConfig:
     stages = tuple(CurriculumStage(**stage) for stage in raw["curriculum"]["stages"])
     curriculum = CurriculumConfig(enabled=bool(raw["curriculum"]["enabled"]), stages=stages)
     network = NetworkConfig(
@@ -361,7 +458,17 @@ def _parse_rl(raw: Dict[str, Any]) -> RLConfig:
     )
 
 
-def _parse_seeds(raw: Dict[str, Any]) -> SeedsConfig:
+def _parse_utility(raw: Mapping[str, Any]) -> UtilityWeights:
+    midterm_values = dict(raw.get("midterm_values", {}))
+    return UtilityWeights(
+        alpha=float(raw["alpha"]),
+        beta=float(raw["beta"]),
+        gamma=float(raw["gamma"]),
+        midterm_values={k: float(v) for k, v in midterm_values.items()},
+    )
+
+
+def _parse_seeds(raw: Mapping[str, Any]) -> SeedsConfig:
     return SeedsConfig(
         train=_as_tuple(raw["train"]),
         test=_as_tuple(raw["test"]),
@@ -369,7 +476,7 @@ def _parse_seeds(raw: Dict[str, Any]) -> SeedsConfig:
     )
 
 
-def _parse_sweep(raw: Dict[str, Any]) -> SweepConfig:
+def _parse_sweep(raw: Mapping[str, Any]) -> SweepConfig:
     return SweepConfig(
         alpha_grid=_as_tuple(raw["alpha_grid"]),
         beta_grid=_as_tuple(raw["beta_grid"]),
@@ -382,32 +489,29 @@ def _parse_sweep(raw: Dict[str, Any]) -> SweepConfig:
 # Public API
 # ---------------------------------------------------------------------------
 def load_config(path: Optional[Path] = None) -> RunConfig:
-    """Load and validate a YAML config file.
-
-    If ``path`` is ``None`` the bundled ``config/default.yaml`` is used.
-    """
+    """Load and validate a YAML config file."""
     config_path = Path(path) if path is not None else DEFAULT_CONFIG_PATH
     if not config_path.exists():
         raise FileNotFoundError(f"config file not found: {config_path}")
-
     with config_path.open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle)
     if not isinstance(raw, dict):
         raise ValueError("config must be a mapping at the top level")
-
     return build_run_config(raw)
 
 
-def build_run_config(raw: Dict[str, Any]) -> RunConfig:
+def build_run_config(raw: Mapping[str, Any]) -> RunConfig:
     """Parse an in-memory raw mapping into a typed :class:`RunConfig`."""
     experiment = ExperimentConfig(**raw["experiment"])
     seeds = _parse_seeds(raw["seeds"])
     simulator = _parse_simulator(raw["simulator"])
-    utility = UtilityWeights(**raw["utility"])
+    utility = _parse_utility(raw["utility"])
     reflex_agent = ReflexAgentConfig(**raw["reflex_agent"])
     utility_agent = UtilityAgentConfig(**raw["utility_agent"])
     rl = _parse_rl(raw["rl"])
     sweep = _parse_sweep(raw["sweep"])
+
+    _validate(simulator=simulator, utility=utility)
 
     return RunConfig(
         meta=dict(raw.get("meta", {})),
@@ -423,11 +527,43 @@ def build_run_config(raw: Dict[str, Any]) -> RunConfig:
     )
 
 
-def _canonical_yaml_dump(raw: Dict[str, Any]) -> str:
-    """Return a deterministic YAML dump used for hashing."""
+def _validate(*, simulator: SimulatorConfig, utility: UtilityWeights) -> None:
+    """Cheap invariant checks so the loader fails fast on bad configs."""
+    valid_modes = {
+        "node_failure": {"per_step_single_victim", "per_node_bernoulli"},
+        "data_spike": {"additive_bump", "multiplicative_10x"},
+        "spot_price": {"bounded_random_walk"},
+    }
+    sp = simulator.stochastic_processes
+    if sp.node_failure.mode not in valid_modes["node_failure"]:
+        raise ValueError(f"unknown node_failure mode: {sp.node_failure.mode}")
+    if sp.data_spike.mode not in valid_modes["data_spike"]:
+        raise ValueError(f"unknown data_spike mode: {sp.data_spike.mode}")
+    if sp.spot_price.mode not in valid_modes["spot_price"]:
+        raise ValueError(f"unknown spot_price mode: {sp.spot_price.mode}")
+
+    if simulator.action_params.execute_ready_job.selection_policy not in {
+        "value",
+        "value_times_priority",
+    }:
+        raise ValueError(
+            "Execute_Ready_Job.selection_policy must be 'value' or 'value_times_priority'"
+        )
+
+    missing_action_costs = set(simulator.actions) - set(simulator.cost.action_costs)
+    if missing_action_costs:
+        raise ValueError(f"cost.action_costs missing entries for: {missing_action_costs}")
+
+    for name in (utility.alpha, utility.beta, utility.gamma):
+        if not isinstance(name, float):
+            raise ValueError("utility weights must be floats")
+
+
+def _canonical_yaml_dump(raw: Mapping[str, Any]) -> str:
+    """Deterministic YAML dump used for hashing."""
     buffer = io.StringIO()
     yaml.safe_dump(
-        raw,
+        dict(raw),
         buffer,
         sort_keys=True,
         default_flow_style=False,
@@ -436,8 +572,7 @@ def _canonical_yaml_dump(raw: Dict[str, Any]) -> str:
     return buffer.getvalue()
 
 
-def sha256_of_resolved(raw: Dict[str, Any]) -> str:
-    """Return the short sha256 of the canonical YAML dump."""
+def sha256_of_resolved(raw: Mapping[str, Any]) -> str:
     canonical = _canonical_yaml_dump(raw)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -448,11 +583,7 @@ def override_utility_weights(
     beta: Optional[float] = None,
     gamma: Optional[float] = None,
 ) -> RunConfig:
-    """Return a copy of ``cfg`` with its utility weights replaced.
-
-    Used by the (α, β, γ) sweep driver so a single config is the base for the
-    full grid.
-    """
+    """Return a copy of ``cfg`` with its utility weights replaced."""
     new_raw = _deepcopy_mapping(cfg.raw)
     u = new_raw["utility"]
     if alpha is not None:
@@ -473,24 +604,33 @@ def _deepcopy_mapping(value: Any) -> Any:
 
 
 __all__ = [
-    "ActionsConfig",
+    "ActionParams",
     "ClusterConfig",
     "CostConfig",
     "CurriculumConfig",
     "CurriculumStage",
     "DAGTaskSpec",
     "DAGTemplateSpec",
+    "DataSpikeConfig",
     "DEFAULT_CONFIG_PATH",
-    "EventsConfig",
+    "DeferJobParams",
+    "ExecuteReadyJobParams",
     "ExperimentConfig",
     "NetworkConfig",
+    "NodeFailureConfig",
+    "PauseLowPriorityJobParams",
     "REPO_ROOT",
     "RLConfig",
     "ReflexAgentConfig",
+    "ReprioritizeQueueParams",
     "RunConfig",
+    "ScaleDownParams",
+    "ScaleUpParams",
     "SeedsConfig",
     "SimulatorConfig",
+    "SpotPriceConfig",
     "StateVectorConfig",
+    "StochasticProcessesConfig",
     "SweepConfig",
     "UtilityAgentConfig",
     "UtilityWeights",
