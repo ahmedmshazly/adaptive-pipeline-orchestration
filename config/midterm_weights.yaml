@@ -218,7 +218,15 @@ rl:
   checkpoint_every_updates: 50
 
 sweep:
-  alpha_grid: [0.5, 1.0, 1.5, 2.0]
-  beta_grid:  [0.05, 0.1, 0.2, 0.4]
-  gamma_grid: [0.5, 1.0, 1.5, 2.0]
-  seeds: [0, 1, 2, 3, 4]
+  alpha_grid: [0.5, 1.0, 2.0, 4.0]
+  beta_grid:  [0.05, 0.1, 0.25, 0.5, 1.0]
+  gamma_grid: [0.5, 1.0, 2.0, 4.0]
+  seeds: [100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
+          110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+  reference_points:
+    midterm_utility: {alpha: 1.0, beta: 0.4, gamma: 0.8}
+    phase1_default:  {alpha: 1.0, beta: 0.1, gamma: 1.0}
+  evaluation_utility:
+    alpha: 1.0
+    beta: 0.1
+    gamma: 1.0

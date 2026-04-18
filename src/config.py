@@ -323,11 +323,28 @@ class RLConfig:
 
 
 @dataclass(frozen=True)
+class SweepReferencePoint:
+    name: str
+    alpha: float
+    beta: float
+    gamma: float
+
+
+@dataclass(frozen=True)
+class SweepEvaluationUtility:
+    alpha: float
+    beta: float
+    gamma: float
+
+
+@dataclass(frozen=True)
 class SweepConfig:
     alpha_grid: Tuple[float, ...]
     beta_grid: Tuple[float, ...]
     gamma_grid: Tuple[float, ...]
     seeds: Tuple[int, ...]
+    reference_points: Tuple[SweepReferencePoint, ...]
+    evaluation_utility: SweepEvaluationUtility
 
 
 @dataclass(frozen=True)
@@ -477,11 +494,29 @@ def _parse_seeds(raw: Mapping[str, Any]) -> SeedsConfig:
 
 
 def _parse_sweep(raw: Mapping[str, Any]) -> SweepConfig:
+    reference_raw = dict(raw.get("reference_points", {}))
+    reference_points = tuple(
+        SweepReferencePoint(
+            name=str(name),
+            alpha=float(spec["alpha"]),
+            beta=float(spec["beta"]),
+            gamma=float(spec["gamma"]),
+        )
+        for name, spec in reference_raw.items()
+    )
+    eval_raw = raw.get("evaluation_utility", {"alpha": 1.0, "beta": 0.1, "gamma": 1.0})
+    evaluation_utility = SweepEvaluationUtility(
+        alpha=float(eval_raw["alpha"]),
+        beta=float(eval_raw["beta"]),
+        gamma=float(eval_raw["gamma"]),
+    )
     return SweepConfig(
         alpha_grid=_as_tuple(raw["alpha_grid"]),
         beta_grid=_as_tuple(raw["beta_grid"]),
         gamma_grid=_as_tuple(raw["gamma_grid"]),
         seeds=_as_tuple(raw["seeds"]),
+        reference_points=reference_points,
+        evaluation_utility=evaluation_utility,
     )
 
 
@@ -632,6 +667,8 @@ __all__ = [
     "StateVectorConfig",
     "StochasticProcessesConfig",
     "SweepConfig",
+    "SweepEvaluationUtility",
+    "SweepReferencePoint",
     "UtilityAgentConfig",
     "UtilityWeights",
     "WorkloadConfig",

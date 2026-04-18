@@ -305,7 +305,27 @@ rl:
 # Sweep / Pareto study
 # ===========================================================================
 sweep:
-  alpha_grid: [0.5, 1.0, 1.5, 2.0]
-  beta_grid:  [0.05, 0.1, 0.2, 0.4]
-  gamma_grid: [0.5, 1.0, 1.5, 2.0]
-  seeds: [0, 1, 2, 3, 4]
+  # Phase-3 (alpha, beta, gamma) grid. 4 x 5 x 4 = 80 cells.
+  # Seeds 100..119 are reserved for the sweep so seeds 0..49 remain clean
+  # for the baseline comparison and seeds 200+ stay free for RL evaluation.
+  alpha_grid: [0.5, 1.0, 2.0, 4.0]
+  beta_grid:  [0.05, 0.1, 0.25, 0.5, 1.0]
+  gamma_grid: [0.5, 1.0, 2.0, 4.0]
+  seeds: [100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
+          110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+
+  # Reference points marked on every Pareto plot.
+  # The "midterm baseline" is the Utility-Based agent run under the midterm
+  # weights (alpha=1.0, beta=0.4, gamma=0.8). beta=0.4 is not on the main
+  # grid, so we include it as a named reference cell in addition to the grid.
+  reference_points:
+    midterm_utility: {alpha: 1.0, beta: 0.4, gamma: 0.8}
+    phase1_default:  {alpha: 1.0, beta: 0.1, gamma: 1.0}
+
+  # Evaluation utility used to rank cells on a comparable scale. This is the
+  # shared-U objective the RL agent is also trained against.
+  #   U_eval = eval_alpha * Value - eval_beta * Cost - eval_gamma * FailedJobs
+  evaluation_utility:
+    alpha: 1.0
+    beta: 0.1
+    gamma: 1.0
