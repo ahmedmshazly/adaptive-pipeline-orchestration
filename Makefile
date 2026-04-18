@@ -15,7 +15,7 @@ PYTEST ?= pytest
 RUN_ID_ARG := $(if $(RUN_ID),--run-id $(RUN_ID),)
 OUT_ROOT_ARG := $(if $(OUT_ROOT),--out-root $(OUT_ROOT),)
 
-.PHONY: help install test baseline baseline-train baseline-test sweep train figs clean phase2 phase2-aggregate phase2-figs phase2-sanity
+.PHONY: help install test baseline baseline-train baseline-test sweep train figs clean phase2 phase2-aggregate phase2-figs phase2-sanity phase3 phase3-figs
 
 help:
 	@echo "make install        - install python dependencies"
@@ -24,7 +24,9 @@ help:
 	@echo "make baseline-train / baseline-test - baselines on train or test seeds"
 	@echo "make phase2         - Phase-2: 50-seed (0..49) baseline + aggregate + figure"
 	@echo "make phase2-sanity  - re-run seeds 0..9 with midterm weights; diff against canonical_midterm"
-	@echo "make sweep          - (α, β, γ) Pareto sweep (scaffolded)"
+	@echo "make phase3         - Phase-3: 80-cell (α, β, γ) sweep x 20 seeds (100..119)"
+	@echo "make phase3-figs    - Pareto fronts + best-fixed-weight selection for phase3 run"
+	@echo "make sweep          - (α, β, γ) Pareto sweep (older scaffold)"
 	@echo "make train          - train the Self-Learning Utility-Based agent (scaffolded)"
 	@echo "make figs           - regenerate paper figures from committed CSVs"
 	@echo "make clean          - remove __pycache__"
@@ -72,6 +74,17 @@ PHASE2_SANITY_RUN_ID ?= phase2_sanity_seeds0_9
 phase2-sanity:
 	$(PYTHON) -m src.compare_baselines --config config/midterm_weights.yaml --seed-group midterm_baseline --run-id $(PHASE2_SANITY_RUN_ID)
 	$(PYTHON) -m scripts.compare_runs --reference results/canonical_midterm --candidate results/$(PHASE2_SANITY_RUN_ID)
+
+PHASE3_RUN_ID ?= sweep_phase3
+PHASE3_RUN_DIR := results/$(PHASE3_RUN_ID)
+PHASE3_SELECTION_RULE ?= mean_utility_then_completion
+
+phase3:
+	$(PYTHON) -m scripts.sweep_phase3 --config $(CONFIG) --run-id $(PHASE3_RUN_ID)
+	$(MAKE) phase3-figs PHASE3_RUN_DIR=$(PHASE3_RUN_DIR) PHASE3_SELECTION_RULE=$(PHASE3_SELECTION_RULE)
+
+phase3-figs:
+	$(PYTHON) -m scripts.figs.phase3_pareto --run-dir $(PHASE3_RUN_DIR) --selection-rule $(PHASE3_SELECTION_RULE)
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +
