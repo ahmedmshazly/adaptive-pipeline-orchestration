@@ -18,7 +18,7 @@ meta:
 experiment:
   num_jobs: 100
   max_steps: 300
-  uncapped_max_steps: 3000
+  uncapped_max_steps: 900
   out_root: results
   run_id: null
 
