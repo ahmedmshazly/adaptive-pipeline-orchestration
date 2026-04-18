@@ -65,28 +65,50 @@ def _hand_state(cfg) -> EpisodeState:
     return state
 
 
-def test_utility_hand_computed():
+def test_utility_hand_computed_phase1_weights():
+    """Phase-1 weights (alpha=1.0, beta=0.1, gamma=1.0) on the fixture.
+
+    Fixture: completed jobs have value 10 + 4 = 14, one failed job,
+    total compute cost forced to 100.
+    Expected U = 1.0 * 14 - 0.1 * 100 - 1.0 * 1 = 14 - 10 - 1 = 3.0.
+    """
     cfg = load_config()
     state = _hand_state(cfg)
-    total_cost = 100.0
     metrics: EpisodeMetrics = summarize_episode(
         cfg=cfg,
         seed=0,
         agent_name="Hand",
         state=state,
         num_jobs=3,
-        total_compute_cost=total_cost,
+        total_compute_cost=100.0,
         hit_step_budget=False,
     )
-    # Expected: U = 1.0 * 14.0 - 0.4 * 100.0 - 0.8 * 1 = 14.0 - 40.0 - 0.8 = -26.8
     assert metrics.total_completed_value == 14.0
     assert metrics.total_job_value == 17.0
     assert metrics.failed_jobs == 1
     assert metrics.completed_jobs == 2
     assert metrics.completion_rate == 2 / 3
-    assert abs(metrics.total_utility - (-26.8)) < 1e-9
-    # Value-weighted completion = 14/17
+    assert abs(metrics.total_utility - 3.0) < 1e-9
     assert abs(metrics.value_weighted_completion_rate - (14.0 / 17.0)) < 1e-4
+
+
+def test_utility_hand_computed_midterm_weights():
+    """Midterm weights (alpha=1.0, beta=0.4, gamma=0.8) on the same fixture.
+
+    Expected U = 1.0 * 14 - 0.4 * 100 - 0.8 * 1 = -26.8.
+    """
+    midterm = override_utility_weights(load_config(), alpha=1.0, beta=0.4, gamma=0.8)
+    state = _hand_state(midterm)
+    metrics = summarize_episode(
+        cfg=midterm,
+        seed=0,
+        agent_name="Hand",
+        state=state,
+        num_jobs=3,
+        total_compute_cost=100.0,
+        hit_step_budget=False,
+    )
+    assert abs(metrics.total_utility - (-26.8)) < 1e-9
 
 
 def test_utility_weights_are_applied():
@@ -112,9 +134,9 @@ def test_utility_weights_are_applied():
         total_compute_cost=100.0,
         hit_step_budget=False,
     )
-    # U_base = 14 - 40 - 0.8 = -26.8
-    # U_boosted = 2*14 - 0.2*100 - 1*1 = 28 - 20 - 1 = 7.0
-    assert abs(m_base.total_utility - (-26.8)) < 1e-9
+    # U_base = 1.0*14 - 0.1*100 - 1.0*1 = 3.0
+    # U_boosted = 2*14 - 0.2*100 - 1*1 = 7.0
+    assert abs(m_base.total_utility - 3.0) < 1e-9
     assert abs(m_boosted.total_utility - 7.0) < 1e-9
 
 

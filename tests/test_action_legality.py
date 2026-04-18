@@ -34,10 +34,11 @@ def _fresh_state(cfg, seed: int = 11, num_jobs: int = 15):
 
 def _check_invariants(state, cfg):
     cluster = cfg.simulator.cluster
+    sp = cfg.simulator.stochastic_processes.spot_price
     assert state.cluster.cpu_capacity >= cluster.min_cpu_capacity
     assert state.cluster.ram_capacity >= cluster.min_ram_capacity
-    assert state.cluster.spot_price >= cfg.simulator.events.spot_price_min - 1e-9
-    assert state.cluster.spot_price <= cfg.simulator.events.spot_price_max + 1e-9
+    assert state.cluster.spot_price >= sp.price_min - 1e-9
+    assert state.cluster.spot_price <= sp.price_max + 1e-9
     assert state.cpu_in_use() <= state.cluster.cpu_capacity
     assert state.ram_in_use() <= state.cluster.ram_capacity
     assert state.cluster.recent_failures >= 0
