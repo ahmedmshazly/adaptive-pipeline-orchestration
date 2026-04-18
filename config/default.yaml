@@ -18,9 +18,10 @@ meta:
 experiment:
   num_jobs: 100            # jobs per episode
   max_steps: 300           # hard step budget used for budget-capped metrics
-  uncapped_max_steps: 3000 # step budget used for the "uncapped" completion
-                           # metric; large enough that realistic workloads
-                           # either fully finish or fully fail
+  uncapped_max_steps: 900  # Phase-2 spec: 3x the capped 300-step budget.
+                           # Used to test whether the capped completion gap
+                           # between Reflex and Utility-Based collapses when
+                           # given more time.
   out_root: results        # every run writes to results/<run_id>/
   run_id: null             # null -> auto timestamp; override via CLI
 
