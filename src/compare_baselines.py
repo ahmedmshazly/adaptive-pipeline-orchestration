@@ -1,136 +1,118 @@
 from __future__ import annotations
 
-"""Head-to-head baseline comparison driver for the current project layout.
+"""Baseline comparison driver.
 
-This script runs the two implemented baseline agents under matched seeds,
-collects one metrics record per episode, builds aggregate summaries, and writes
-reproducible experiment artifacts to the repository's results directory.
+Runs the Reflex and Utility-Based baselines under matched seeds using the
+configuration loaded from ``config/default.yaml`` (or an override passed via
+``--config``), and writes the resulting artifacts into ``<out_root>/<run_id>/``
+following the reproducibility convention in :mod:`src.run_artifacts`.
 
-At the current project stage, this file is the main experiment entrypoint for
-baseline evaluation. Its job is intentionally narrow:
-
-- run the Reflex Agent baseline
-- run the non-learning Utility-Based baseline
-- summarize both result sets with the same reporting schema
-- compute simple head-to-head comparison counts
-- save CSV, JSON, and Markdown outputs for later inspection
-
-The script does not do plotting, hyperparameter search, or learning.
+Every numeric setting (seeds, num_jobs, max_steps, alpha/beta/gamma, every
+agent / simulator constant) is driven by the YAML config. CLI flags only
+exist for operational overrides (config path, run id, seed group).
 """
 
 import argparse
-import csv
-import json
-from pathlib import Path
 import statistics
-import sys
-from typing import Any, Dict, Iterable, List, Sequence
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Sequence
 
-# Allow direct execution from the src/ directory without requiring package
-# installation. This keeps the current workflow simple while still using the
-# cleaner repository layout.
-THIS_DIR = Path(__file__).resolve().parent
-REPO_ROOT = THIS_DIR.parent
-if str(THIS_DIR) not in sys.path:
-    sys.path.insert(0, str(THIS_DIR))
+from .config import RunConfig, load_config
+from .metrics import EpisodeMetrics
+from .reflex_agent import build_reflex_agent
+from .run_artifacts import (
+    ensure_run_dir,
+    generate_run_id,
+    write_json,
+    write_manifest,
+    write_metrics_csv,
+    write_resolved_config,
+    write_text,
+)
+from .runner import run_many_episodes
+from .utility_agent import build_utility_agent
 
-from reflex_agent import EpisodeMetrics, run_many_reflex_episodes  # noqa: E402
-from utility_agent import run_many_utility_episodes  # noqa: E402
 
-
-DEFAULT_SEEDS = list(range(10))
-DEFAULT_NUM_JOBS = 100
-DEFAULT_MAX_STEPS = 300
-DEFAULT_OUT_DIR = REPO_ROOT / "results" / "baselines_v0"
-
-RESULT_FILENAMES = {
-    "reflex_csv": "reflex_runs.csv",
-    "utility_csv": "utility_runs.csv",
-    "summary_json": "summary.json",
-    "report_md": "comparison_report.md",
-}
-
-SUMMARY_FIELDS = [
+SUMMARY_FIELDS = (
     "completion_rate",
+    "value_weighted_completion_rate",
+    "uncapped_completion_rate",
     "failure_rate",
     "total_completed_value",
     "total_compute_cost",
     "avg_compute_cost_per_step",
     "total_utility",
     "steps_executed",
-]
+)
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments for a baseline comparison run."""
     parser = argparse.ArgumentParser(
-        description=(
-            "Run the current Reflex and Utility-based baselines under matched "
-            "seeds and write CSV/JSON/Markdown summaries."
-        )
+        description="Run Reflex and Utility-Based baselines under matched seeds."
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to a YAML config (defaults to config/default.yaml).",
+    )
+    parser.add_argument(
+        "--seed-group",
+        choices=("train", "test", "midterm_baseline", "custom"),
+        default="midterm_baseline",
+        help="Which seed list from the config to use.",
     )
     parser.add_argument(
         "--seeds",
         nargs="*",
         type=int,
-        default=DEFAULT_SEEDS,
-        help="List of integer seeds to evaluate. Defaults to 0 through 9.",
+        default=None,
+        help="Explicit seed list; required when --seed-group custom.",
     )
     parser.add_argument(
-        "--num-jobs",
-        type=int,
-        default=DEFAULT_NUM_JOBS,
-        help="Number of jobs generated in each episode.",
+        "--run-id",
+        type=str,
+        default=None,
+        help="Override the auto-generated run id.",
     )
     parser.add_argument(
-        "--max-steps",
-        type=int,
-        default=DEFAULT_MAX_STEPS,
-        help="Maximum number of environment steps allowed in each episode.",
-    )
-    parser.add_argument(
-        "--out-dir",
+        "--out-root",
         type=Path,
-        default=DEFAULT_OUT_DIR,
-        help="Directory used for CSV, JSON, and Markdown outputs.",
+        default=None,
+        help="Override config.experiment.out_root.",
     )
     return parser.parse_args()
 
 
-def validate_args(args: argparse.Namespace) -> None:
-    """Reject obviously invalid experiment settings early."""
-    if not args.seeds:
-        raise ValueError("At least one seed is required")
-    if args.num_jobs <= 0:
-        raise ValueError("num_jobs must be positive")
-    if args.max_steps <= 0:
-        raise ValueError("max_steps must be positive")
+def resolve_seeds(cfg: RunConfig, args: argparse.Namespace) -> List[int]:
+    if args.seed_group == "custom":
+        if not args.seeds:
+            raise ValueError("--seeds is required when --seed-group=custom")
+        return list(args.seeds)
+    if args.seed_group == "train":
+        return list(cfg.seeds.train)
+    if args.seed_group == "test":
+        return list(cfg.seeds.test)
+    return list(cfg.seeds.midterm_baseline)
 
 
-def metrics_to_rows(metrics: Iterable[EpisodeMetrics]) -> List[Dict[str, float | int | str | bool]]:
-    """Convert metrics records into row dictionaries ready for CSV export."""
-    return [episode_metrics.as_dict() for episode_metrics in metrics]
-
-
-def summarize_agent(metrics: Sequence[EpisodeMetrics]) -> Dict[str, float | int | str]:
-    """Build an aggregate summary for one agent across repeated runs."""
+def summarize_agent(metrics: Sequence[EpisodeMetrics]) -> Dict[str, Any]:
     if not metrics:
-        raise ValueError("No metrics provided")
-
-    summary: Dict[str, float | int | str] = {
+        raise ValueError("no metrics provided")
+    summary: Dict[str, Any] = {
         "agent_name": metrics[0].agent_name,
         "num_runs": len(metrics),
         "num_jobs": metrics[0].num_jobs,
     }
-
     for field_name in SUMMARY_FIELDS:
         values = [float(getattr(metric, field_name)) for metric in metrics]
         summary[f"mean_{field_name}"] = round(statistics.fmean(values), 4)
         summary[f"std_{field_name}"] = (
             round(statistics.pstdev(values), 4) if len(values) > 1 else 0.0
         )
-
     summary["all_jobs_completed_runs"] = sum(1 for metric in metrics if metric.completed_all_jobs)
+    summary["hit_step_budget_runs"] = sum(1 for metric in metrics if metric.hit_step_budget)
     summary["mean_completed_jobs"] = round(
         statistics.fmean(metric.completed_jobs for metric in metrics),
         4,
@@ -142,78 +124,56 @@ def summarize_agent(metrics: Sequence[EpisodeMetrics]) -> Dict[str, float | int 
     return summary
 
 
-def build_comparison(
+def head_to_head(
     reflex_metrics: Sequence[EpisodeMetrics],
     utility_metrics: Sequence[EpisodeMetrics],
-) -> Dict[str, float | int]:
-    """Build a small head-to-head comparison summary across matched runs."""
+) -> Dict[str, int]:
     if len(reflex_metrics) != len(utility_metrics):
-        raise ValueError("Runs must have matching seed counts for head-to-head comparison")
-
-    utility_total_utility_wins = 0
-    reflex_total_utility_wins = 0
-    ties_total_utility = 0
-    utility_better_completion_runs = 0
-    utility_lower_cost_runs = 0
-
-    for reflex_run, utility_run in zip(reflex_metrics, utility_metrics):
-        if utility_run.total_utility > reflex_run.total_utility:
-            utility_total_utility_wins += 1
-        elif utility_run.total_utility < reflex_run.total_utility:
-            reflex_total_utility_wins += 1
+        raise ValueError("matched-seed comparison requires equal run counts")
+    utility_wins = reflex_wins = ties = 0
+    utility_better_completion = utility_lower_cost = 0
+    for r, u in zip(reflex_metrics, utility_metrics):
+        if u.total_utility > r.total_utility:
+            utility_wins += 1
+        elif u.total_utility < r.total_utility:
+            reflex_wins += 1
         else:
-            ties_total_utility += 1
-
-        if utility_run.completion_rate > reflex_run.completion_rate:
-            utility_better_completion_runs += 1
-        if utility_run.total_compute_cost < reflex_run.total_compute_cost:
-            utility_lower_cost_runs += 1
-
+            ties += 1
+        if u.completion_rate > r.completion_rate:
+            utility_better_completion += 1
+        if u.total_compute_cost < r.total_compute_cost:
+            utility_lower_cost += 1
     return {
-        "utility_total_utility_wins": utility_total_utility_wins,
-        "reflex_total_utility_wins": reflex_total_utility_wins,
-        "ties_total_utility": ties_total_utility,
-        "utility_better_completion_runs": utility_better_completion_runs,
-        "utility_lower_cost_runs": utility_lower_cost_runs,
+        "utility_total_utility_wins": utility_wins,
+        "reflex_total_utility_wins": reflex_wins,
+        "ties_total_utility": ties,
+        "utility_better_completion_runs": utility_better_completion,
+        "utility_lower_cost_runs": utility_lower_cost,
         "num_head_to_head_runs": len(reflex_metrics),
     }
 
 
-def write_csv(path: Path, rows: Sequence[Dict[str, float | int | str | bool]]) -> None:
-    """Write row dictionaries to a UTF-8 CSV file."""
-    if not rows:
-        return
-
-    with path.open("w", newline="", encoding="utf-8") as file_handle:
-        writer = csv.DictWriter(file_handle, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def write_json(path: Path, payload: Dict[str, Any]) -> None:
-    """Write a JSON artifact with stable indentation."""
-    with path.open("w", encoding="utf-8") as file_handle:
-        json.dump(payload, file_handle, indent=2)
-
-
-def markdown_summary_table(agent_summaries: Sequence[Dict[str, float | int | str]]) -> str:
-    """Render a compact Markdown table for the two agent summaries."""
+def render_markdown_report(
+    cfg: RunConfig,
+    seeds: Sequence[int],
+    reflex_summary: Dict[str, Any],
+    utility_summary: Dict[str, Any],
+    comparison: Dict[str, int],
+) -> str:
+    u = cfg.utility
     headers = [
         "Agent",
         "Runs",
         "Mean Total Utility",
         "Mean Completion Rate",
+        "Mean Value-Weighted Completion",
+        "Mean Uncapped Completion",
         "Mean Compute Cost",
         "Mean Failure Rate",
-        "Mean Steps",
     ]
-    lines = [
-        "| " + " | ".join(headers) + " |",
-        "|" + "|".join(["---"] * len(headers)) + "|",
-    ]
-
-    for summary in agent_summaries:
-        lines.append(
+    rows = []
+    for summary in (reflex_summary, utility_summary):
+        rows.append(
             "| "
             + " | ".join(
                 [
@@ -221,168 +181,111 @@ def markdown_summary_table(agent_summaries: Sequence[Dict[str, float | int | str
                     str(summary["num_runs"]),
                     f"{summary['mean_total_utility']:.4f}",
                     f"{summary['mean_completion_rate']:.4f}",
+                    f"{summary['mean_value_weighted_completion_rate']:.4f}",
+                    f"{summary['mean_uncapped_completion_rate']:.4f}",
                     f"{summary['mean_total_compute_cost']:.4f}",
                     f"{summary['mean_failure_rate']:.4f}",
-                    f"{summary['mean_steps_executed']:.2f}",
                 ]
             )
             + " |"
         )
-
-    return "\n".join(lines)
-
-
-def render_report(
-    seeds: Sequence[int],
-    num_jobs: int,
-    max_steps: int,
-    reflex_summary: Dict[str, float | int | str],
-    utility_summary: Dict[str, float | int | str],
-    comparison: Dict[str, float | int],
-) -> str:
-    """Render the human-readable Markdown comparison report."""
-    summary_table = markdown_summary_table([reflex_summary, utility_summary])
-    delta_total_utility = float(utility_summary["mean_total_utility"]) - float(
-        reflex_summary["mean_total_utility"]
+    table = "\n".join(
+        [
+            "| " + " | ".join(headers) + " |",
+            "|" + "|".join(["---"] * len(headers)) + "|",
+            *rows,
+        ]
     )
-    delta_completion_rate = float(utility_summary["mean_completion_rate"]) - float(
-        reflex_summary["mean_completion_rate"]
-    )
-    delta_total_compute_cost = float(utility_summary["mean_total_compute_cost"]) - float(
-        reflex_summary["mean_total_compute_cost"]
-    )
-
-    lines = [
-        "# Baseline Comparison",
-        "",
-        "## Run configuration",
-        f"- Seeds: {list(seeds)}",
-        f"- Jobs per run: {num_jobs}",
-        f"- Max steps: {max_steps}",
-        "",
-        "## Summary table",
-        summary_table,
-        "",
-        "## Head-to-head summary",
-        (
-            f"- Utility baseline had higher total utility in "
-            f"{comparison['utility_total_utility_wins']} / {comparison['num_head_to_head_runs']} runs."
-        ),
-        (
-            f"- Reflex baseline had higher total utility in "
-            f"{comparison['reflex_total_utility_wins']} / {comparison['num_head_to_head_runs']} runs."
-        ),
-        f"- Ties on total utility: {comparison['ties_total_utility']}.",
-        (
-            f"- Utility baseline had better completion rate in "
-            f"{comparison['utility_better_completion_runs']} runs."
-        ),
-        (
-            f"- Utility baseline had lower total compute cost in "
-            f"{comparison['utility_lower_cost_runs']} runs."
-        ),
-        "",
-        "## Mean deltas (Utility baseline minus Reflex baseline)",
-        f"- Total utility delta: {delta_total_utility:.4f}",
-        f"- Completion rate delta: {delta_completion_rate:.4f}",
-        f"- Total compute cost delta: {delta_total_compute_cost:.4f}",
-        "",
-        "## Interpretation",
-        (
-            "These are current baseline runs intended to validate the simulator "
-            "and the evaluation pipeline before adding the self-learning agent."
-        ),
-    ]
-    return "\n".join(lines) + "\n"
-
-
-def build_summary_payload(
-    args: argparse.Namespace,
-    reflex_summary: Dict[str, float | int | str],
-    utility_summary: Dict[str, float | int | str],
-    comparison: Dict[str, float | int],
-) -> Dict[str, Any]:
-    """Build the machine-readable JSON payload saved for the experiment run."""
-    return {
-        "config": {
-            "seeds": args.seeds,
-            "num_jobs": args.num_jobs,
-            "max_steps": args.max_steps,
-            "out_dir": str(args.out_dir),
-        },
-        "reflex_summary": reflex_summary,
-        "utility_summary": utility_summary,
-        "comparison": comparison,
-    }
-
-
-def run_comparison(args: argparse.Namespace) -> Dict[str, Any]:
-    """Run both baselines and return all result artifacts in memory."""
-    reflex_metrics = run_many_reflex_episodes(
-        seeds=args.seeds,
-        num_jobs=args.num_jobs,
-        max_steps=args.max_steps,
-    )
-    utility_metrics = run_many_utility_episodes(
-        seeds=args.seeds,
-        num_jobs=args.num_jobs,
-        max_steps=args.max_steps,
+    return "\n".join(
+        [
+            "# Baseline comparison",
+            "",
+            f"- Config: `{cfg.meta.get('config_name', '?')}` (hash `{cfg.config_hash()[:12]}`)",
+            f"- Utility weights: alpha={u.alpha}, beta={u.beta}, gamma={u.gamma}",
+            f"- Seeds ({len(seeds)}): {list(seeds)}",
+            f"- Jobs per run: {cfg.experiment.num_jobs}",
+            f"- Max steps (capped): {cfg.experiment.max_steps}",
+            f"- Uncapped max steps: {cfg.experiment.uncapped_max_steps}",
+            "",
+            "## Summary",
+            table,
+            "",
+            "## Head-to-head",
+            f"- Utility wins on total utility: "
+            f"{comparison['utility_total_utility_wins']}/{comparison['num_head_to_head_runs']}",
+            f"- Reflex wins on total utility:  "
+            f"{comparison['reflex_total_utility_wins']}/{comparison['num_head_to_head_runs']}",
+            f"- Ties: {comparison['ties_total_utility']}",
+            f"- Utility better completion: "
+            f"{comparison['utility_better_completion_runs']}/{comparison['num_head_to_head_runs']}",
+            f"- Utility lower cost: "
+            f"{comparison['utility_lower_cost_runs']}/{comparison['num_head_to_head_runs']}",
+            "",
+        ]
     )
 
-    reflex_rows = metrics_to_rows(reflex_metrics)
-    utility_rows = metrics_to_rows(utility_metrics)
 
+def run_comparison(cfg: RunConfig, seeds: Sequence[int]) -> Dict[str, Any]:
+    reflex_metrics = run_many_episodes(cfg=cfg, agent_factory=build_reflex_agent, seeds=seeds)
+    utility_metrics = run_many_episodes(cfg=cfg, agent_factory=build_utility_agent, seeds=seeds)
+    all_rows = [metric.as_dict() for metric in [*reflex_metrics, *utility_metrics]]
     reflex_summary = summarize_agent(reflex_metrics)
     utility_summary = summarize_agent(utility_metrics)
-    comparison = build_comparison(reflex_metrics, utility_metrics)
-    report_markdown = render_report(
-        seeds=args.seeds,
-        num_jobs=args.num_jobs,
-        max_steps=args.max_steps,
-        reflex_summary=reflex_summary,
-        utility_summary=utility_summary,
-        comparison=comparison,
-    )
-
+    comparison = head_to_head(reflex_metrics, utility_metrics)
     return {
-        "reflex_rows": reflex_rows,
-        "utility_rows": utility_rows,
+        "reflex_metrics": reflex_metrics,
+        "utility_metrics": utility_metrics,
+        "all_rows": all_rows,
         "reflex_summary": reflex_summary,
         "utility_summary": utility_summary,
         "comparison": comparison,
-        "summary_payload": build_summary_payload(
-            args=args,
-            reflex_summary=reflex_summary,
-            utility_summary=utility_summary,
-            comparison=comparison,
-        ),
-        "report_markdown": report_markdown,
     }
-
-
-def save_outputs(out_dir: Path, results: Dict[str, Any]) -> None:
-    """Write all comparison artifacts to the requested output directory."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    write_csv(out_dir / RESULT_FILENAMES["reflex_csv"], results["reflex_rows"])
-    write_csv(out_dir / RESULT_FILENAMES["utility_csv"], results["utility_rows"])
-    write_json(out_dir / RESULT_FILENAMES["summary_json"], results["summary_payload"])
-    (out_dir / RESULT_FILENAMES["report_md"]).write_text(
-        results["report_markdown"],
-        encoding="utf-8",
-    )
 
 
 def main() -> None:
-    """Run the baseline comparison and save the resulting artifacts."""
     args = parse_args()
-    validate_args(args)
+    cfg = load_config(args.config) if args.config else load_config()
+    seeds = resolve_seeds(cfg, args)
 
-    results = run_comparison(args)
-    save_outputs(args.out_dir, results)
+    out_root = Path(args.out_root) if args.out_root else Path(cfg.experiment.out_root)
+    run_id = args.run_id or cfg.experiment.run_id or generate_run_id("baseline")
+    run_dir = ensure_run_dir(out_root, run_id)
 
-    print(results["report_markdown"])
-    print(f"Saved outputs to: {args.out_dir}")
+    started = time.time()
+    results = run_comparison(cfg=cfg, seeds=seeds)
+
+    write_resolved_config(run_dir, cfg)
+    write_metrics_csv(run_dir, results["all_rows"])
+    summary_payload = {
+        "seeds": list(seeds),
+        "seed_group": args.seed_group,
+        "reflex_summary": results["reflex_summary"],
+        "utility_summary": results["utility_summary"],
+        "head_to_head": results["comparison"],
+    }
+    write_json(run_dir, "summary.json", summary_payload)
+    write_text(
+        run_dir,
+        "report.md",
+        render_markdown_report(
+            cfg=cfg,
+            seeds=seeds,
+            reflex_summary=results["reflex_summary"],
+            utility_summary=results["utility_summary"],
+            comparison=results["comparison"],
+        ),
+    )
+    write_manifest(
+        run_dir=run_dir,
+        cfg=cfg,
+        seeds=seeds,
+        extra={"entrypoint": "compare_baselines", "seed_group": args.seed_group},
+        wall_clock_start=started,
+    )
+
+    print(f"Wrote baseline run to: {run_dir}")
+    print(f"  config hash: {cfg.config_hash()[:12]}")
+    print(f"  seeds:       {list(seeds)}")
 
 
 if __name__ == "__main__":
