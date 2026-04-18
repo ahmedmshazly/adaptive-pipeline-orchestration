@@ -1,16 +1,16 @@
 # Single source of truth for the adaptive-pipeline-orchestration project.
 #
-# Every simulator constant, agent hyperparameter, and experiment control that
-# was previously hard-coded in Python lives here. No module under src/ should
-# contain a numeric literal that is not also in this file.
+# Every simulator parameter, action parameter, stochastic-process knob,
+# cost coefficient, utility weight, and agent hyperparameter lives here.
+# No Python module under src/ contains a numeric literal that is not also
+# in this file.
 #
-# A run is reproducible iff (commit SHA, config hash, seed list) matches.
-# The config hash is the sha256 of this file's canonical YAML dump and is
-# written into run_manifest.json for every experiment.
+# Also see SPECIFICATION.md for the prose spec of state, actions, stochastic
+# processes, cost, and utility weights — the two documents must stay in sync.
 
 meta:
   config_name: default
-  schema_version: 1
+  schema_version: 2
 
 # ---------------------------------------------------------------------------
 # Experiment control
@@ -19,23 +19,23 @@ experiment:
   num_jobs: 100            # jobs per episode
   max_steps: 300           # hard step budget used for budget-capped metrics
   uncapped_max_steps: 3000 # step budget used for the "uncapped" completion
-                           # metric; large enough that all workloads finish
-                           # or fail in practice
+                           # metric; large enough that realistic workloads
+                           # either fully finish or fully fail
   out_root: results        # every run writes to results/<run_id>/
-  run_id: null             # null -> auto timestamp; override via CLI / config
+  run_id: null             # null -> auto timestamp; override via CLI
 
 seeds:
-  # Train / test split is enforced at every experiment entry point. The
-  # midterm used a single flat list 0..9; the v1 protocol treats seeds 0..7
-  # as training / weight-tuning material and 8..15 as the held-out test set.
+  # Train / test split is enforced at every experiment entry point.
+  # The midterm used a single flat list 0..9; the v1 protocol uses
+  # 0..7 for training / weight-tuning and 8..15 as the held-out test set.
   train: [0, 1, 2, 3, 4, 5, 6, 7]
   test:  [8, 9, 10, 11, 12, 13, 14, 15]
-  # midterm_baseline is retained only to be able to reproduce Table 1.
+  # Retained so the exact midterm Table 1 run can still be reproduced.
   midterm_baseline: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Simulator
-# ---------------------------------------------------------------------------
+# ===========================================================================
 simulator:
   actions:
     - Execute_Ready_Job
@@ -45,57 +45,110 @@ simulator:
     - Reprioritize_Queue
     - Pause_LowPriority_Job
 
+  # ------------------------------------------------------------------------
+  # Cluster
+  # ------------------------------------------------------------------------
   cluster:
     base_cpu_capacity: 10
     base_ram_capacity: 16
     min_cpu_capacity: 6
     min_ram_capacity: 8
-    scale_up_cpu_boost: 3
-    scale_up_ram_boost: 4
-    scale_down_cpu_step: 2
-    scale_down_ram_step: 2
-    scale_boost_duration: 3
+    scale_boost_duration: 3          # legacy alias; action_params.Scale_Up.duration_steps is canonical
     max_recent_failures: 10
     initial_spot_price_low: 0.3
     initial_spot_price_high: 0.7
 
-  # Stochastic events applied after every action.
-  events:
-    node_failure_prob: 0.05          # P(Node_Failure) per step
-    data_spike_prob: 0.08            # P(Data_Spike) per step
-    data_spike_min_tasks: 1
-    data_spike_max_tasks: 3
-    data_spike_duration_bump: 1      # +steps added to remaining_time
-    data_spike_cpu_bump: 1           # +cpu_demand per affected task
-    data_spike_cpu_cap: 6            # clamp on cpu_demand after spike
-    spot_price_walk_low: -0.08
-    spot_price_walk_high: 0.08
-    spot_price_min: 0.1
-    spot_price_max: 1.0
+  # ------------------------------------------------------------------------
+  # Action parameters
+  #
+  # Every action has a fixed, named parameter set (see SPECIFICATION.md §2).
+  # ------------------------------------------------------------------------
+  action_params:
+    Execute_Ready_Job:
+      selection_policy: value_times_priority   # "value" | "value_times_priority"
+      max_launches_per_step: 1
+    Defer_Job:
+      duration_steps: 1                        # no-op of this many ticks
+    Scale_Up:
+      cpu_delta: 3                             # additive CPU units
+      ram_delta: 4                             # additive RAM units
+      duration_steps: 3                        # boost lifetime (steps)
+    Scale_Down:
+      cpu_delta: 2
+      ram_delta: 2
+      # Floors are inherited from simulator.cluster.{min_cpu_capacity,min_ram_capacity}.
+    Reprioritize_Queue:
+      bump: 0.05
+      cap: 1.0
+    Pause_LowPriority_Job:
+      priority_threshold: 0.4
+      max_jobs: 2
 
-  # Cost function used everywhere: per-step cost and best-ready-task cost.
+  # ------------------------------------------------------------------------
+  # Stochastic processes (see SPECIFICATION.md §3)
+  # ------------------------------------------------------------------------
+  stochastic_processes:
+
+    node_failure:
+      # Phase-1 committed semantics. Alternative is "per_node_bernoulli".
+      mode: per_step_single_victim
+      # P(at least one failure this step) conditional on >=1 running task.
+      prob: 0.05
+
+    data_spike:
+      # Phase-1 committed semantics. Alternative is "multiplicative_10x".
+      mode: additive_bump
+      prob: 0.08
+      min_tasks: 1
+      max_tasks: 3
+      # Parameters for mode=additive_bump:
+      duration_bump: 1
+      cpu_bump: 1
+      cpu_cap: 6
+      # Parameters for mode=multiplicative_10x (documented but not active):
+      multiplier: 10
+      duration_steps: 3
+
+    spot_price:
+      mode: bounded_random_walk
+      walk_low: -0.08
+      walk_high: 0.08
+      price_min: 0.1
+      price_max: 1.0
+
+  # ------------------------------------------------------------------------
+  # Cost function (see SPECIFICATION.md §4)
+  #
+  # step_cost(state)       = spot_price * (cpu_weight * cpu_in_use
+  #                                        + ram_weight * ram_in_use)
+  # action_cost(a, state)  = spot_price * action_costs[a]
+  # cost(state, action)    = step_cost(state) + action_cost(action, state)
+  # ------------------------------------------------------------------------
   cost:
     cpu_weight: 0.6
     ram_weight: 0.4
+    action_costs:
+      Execute_Ready_Job: 0.0
+      Defer_Job: 0.0
+      Scale_Up: 0.0
+      Scale_Down: 0.0
+      Reprioritize_Queue: 0.0
+      Pause_LowPriority_Job: 0.0
 
-  # State-vector normalization divisors.
+  # ------------------------------------------------------------------------
+  # State-vector normalisation (see SPECIFICATION.md §1)
+  # ------------------------------------------------------------------------
   state_vector:
     queue_depth_norm: 20.0
     ready_nodes_norm: 20.0
     recent_failures_norm: 5.0
 
-  # Action semantics that previously had literals inside do_action().
-  actions_config:
-    execute_ranking: value_times_priority   # "value" | "value_times_priority"
-    reprioritize_bump: 0.05
-    reprioritize_cap: 1.0
-    pause_priority_threshold: 0.4
-    pause_max_jobs: 2
-
+  # ------------------------------------------------------------------------
   # Workload generation
+  # ------------------------------------------------------------------------
   workload:
     duration_factors: [0.8, 1.0, 1.2, 1.5]
-    # Duplicated 1.0 biases cpu/ram demand toward "no resource inflation".
+    # 1.0 is duplicated to bias cpu/ram factors toward "no resource inflation".
     cpu_factors: [1.0, 1.0, 1.5]
     ram_factors: [1.0, 1.0, 1.5]
     priority_low: 0.2
@@ -105,7 +158,9 @@ simulator:
     job_value_low: 1.0
     job_value_high: 5.0
 
+  # ------------------------------------------------------------------------
   # DAG templates. Each task is (id, parents, base_duration, cpu, ram).
+  # ------------------------------------------------------------------------
   dag_templates:
     - name: chain
       tasks:
@@ -125,28 +180,36 @@ simulator:
         - [ingest_c,  [],                              2, 1, 2]
         - [aggregate, [ingest_a, ingest_b, ingest_c],  4, 4, 4]
 
-# ---------------------------------------------------------------------------
-# Episode-level utility U(s, a) = alpha*Value - beta*Cost - gamma*Risk
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Utility weights (see SPECIFICATION.md §5)
+#
+# U(s, a) = alpha * Value(job) - beta * Cost(resource) - gamma * Risk(failure)
+# ===========================================================================
 utility:
+  # Phase-1 committed defaults. The midterm did not pin these deliberately,
+  # so we move to a balanced starting point and plan to sweep in Phase 3.
   alpha: 1.0
-  beta: 0.4
-  gamma: 0.8
+  beta: 0.1
+  gamma: 1.0
 
-# ---------------------------------------------------------------------------
+  # Exact midterm values, preserved so Table 1 can be reproduced via
+  # --config override or programmatic override_utility_weights().
+  midterm_values:
+    alpha: 1.0
+    beta: 0.4
+    gamma: 0.8
+
+# ===========================================================================
 # Reflex agent policy thresholds
-# ---------------------------------------------------------------------------
+# ===========================================================================
 reflex_agent:
   scale_down_spot_price_threshold: 0.8
   scale_up_queue_depth_threshold: 3
   scale_up_spot_price_threshold: 0.7
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Non-learning Utility-Based agent scoring constants
-#
-# These are the hand-designed action-scoring weights (not the episode
-# utility). The shared episode utility above is what the RL reward uses.
-# ---------------------------------------------------------------------------
+# ===========================================================================
 utility_agent:
   # Hard penalties
   no_executable_task_score: -10000.0
@@ -158,29 +221,24 @@ utility_agent:
   no_low_priority_work_penalty: -12.0
   unnecessary_pause_penalty: -10.0
 
-  # Execute_Ready_Job
   execution_urgency_weight: 0.25
 
-  # Defer_Job
   defer_base_penalty: -0.5
   queue_penalty_weight: 4.0
   urgency_penalty_weight: 4.0
   failure_relief_weight: 0.8
   price_relief_weight: 1.2
-  price_relief_threshold: 0.8          # spot_price - 0.8 clipped at 0
+  price_relief_threshold: 0.8
 
-  # Scale_Up
   blocked_task_benefit_weight: 2.0
   scale_up_urgency_weight: 4.0
   scale_up_failure_weight: 2.0
   scale_up_price_weight: 8.0
 
-  # Scale_Down
   scale_down_price_weight: 6.0
   scale_down_base_bonus: 1.5
   scale_down_queue_weight: 0.5
 
-  # Reprioritize_Queue
   reprioritize_queue_weight: 2.0
   reprioritize_urgency_weight: 2.0
   reprioritize_failure_weight: 1.0
@@ -188,7 +246,6 @@ utility_agent:
   reprioritize_min_queue_depth: 4
   reprioritize_min_urgency: 0.6
 
-  # Pause_LowPriority_Job
   pause_active_low_weight: 1.2
   pause_queue_weight: 2.0
   pause_failure_weight: 4.0
@@ -198,26 +255,23 @@ utility_agent:
   pause_min_failure_pressure: 0.4
   pause_min_queue_pressure: 0.5
 
-  # Execute scoring helpers
   best_task_resource_cost_weight: 0.35
   ready_children_bonus_weight: 0.15
   job_value_base: 0.7
   job_priority_weight: 0.6
   job_urgency_weight: 0.4
 
-  # Launch-risk estimate
   load_risk_threshold: 0.8
   load_risk_weight: 3.0
   failure_history_risk_weight: 1.5
   queue_pressure_risk_weight: 0.4
 
-  # Stress guards that force execution in benign regimes
   stress_guard_failure_limit: 0.6
   stress_guard_price_limit: 0.9
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Self-Learning Utility-Based agent (scaffolded for later commits)
-# ---------------------------------------------------------------------------
+# ===========================================================================
 rl:
   algorithm: reinforce_with_baseline    # "reinforce_with_baseline" | "ppo"
   reward: shared_episode_utility        # reuses utility.alpha/beta/gamma
@@ -242,15 +296,15 @@ rl:
     type: mlp
     hidden_sizes: [64, 64]
     activation: tanh
-  training_seed_list: [100, 101, 102]   # RL training seeds (disjoint from eval)
+  training_seed_list: [100, 101, 102]   # training seeds (disjoint from eval)
   eval_every_updates: 25
   checkpoint_every_updates: 50
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Sweep / Pareto study
-# ---------------------------------------------------------------------------
+# ===========================================================================
 sweep:
   alpha_grid: [0.5, 1.0, 1.5, 2.0]
-  beta_grid:  [0.1, 0.2, 0.4, 0.8]
-  gamma_grid: [0.2, 0.4, 0.8, 1.6]
-  seeds: [0, 1, 2, 3, 4]                # smaller grid per cell for speed
+  beta_grid:  [0.05, 0.1, 0.2, 0.4]
+  gamma_grid: [0.5, 1.0, 1.5, 2.0]
+  seeds: [0, 1, 2, 3, 4]
