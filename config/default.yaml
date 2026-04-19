@@ -275,18 +275,21 @@ utility_agent:
 # ===========================================================================
 rl:
   algorithm: reinforce_with_baseline    # "reinforce_with_baseline" | "ppo"
-  reward: shared_episode_utility        # reuses utility.alpha/beta/gamma
-  gamma_discount: 0.99
+  reward: shared_episode_utility        # uses utility.alpha/beta/gamma
+  # Phase-4 notational lock: the RL discount factor is delta, not gamma
+  # (paper §4.3, §5.6). Utility gamma stays as the failure-risk weight.
+  delta_discount: 0.99
   entropy_coef: 0.01
-  value_loss_coef: 0.5
+  # Note: no separate value-function head is trained; the sequence-specific
+  # baseline is the sole variance-reduction mechanism (paper §4.3.1).
   learning_rate: 3.0e-4
   optimizer: adam
   grad_clip_norm: 1.0
   batch_size: 16                        # episodes per update (REINFORCE)
-  num_updates: 400                      # policy-gradient updates
+  num_updates: 400                      # total policy-gradient updates
   steps_per_episode_cap: 300            # env max_steps during training
-  memoryless_termination: true          # no bootstrap past episode end
-  sequence_specific_baseline: true      # per-episode-length baseline
+  memoryless_termination: true          # tau ~ Exp(mu) per paper §4.3.4
+  sequence_specific_baseline: true      # per-timestep batch-mean baseline
   curriculum:
     enabled: true
     stages:
@@ -297,9 +300,33 @@ rl:
     type: mlp
     hidden_sizes: [64, 64]
     activation: tanh
-  training_seed_list: [100, 101, 102]   # training seeds (disjoint from eval)
+
+  # Three-pool seed partitioning per §4.3.6. Pools are materialised as
+  # explicit integer lists (range start/stop pairs expanded at config load)
+  # so they can be set-operated in regression tests.
+  training_seeds:
+    kind: range
+    start: 300
+    stop: 1000
+  validation_seeds:
+    kind: range
+    start: 250
+    stop: 300
+  test_seeds:
+    kind: range
+    start: 200
+    stop: 250
+  initialisation_seeds: [7, 11, 13]
+
   eval_every_updates: 25
   checkpoint_every_updates: 50
+
+# Stripped Utility-Based comparand (paper §4.3.7, §5.6).
+# When disable_force_execute_guard=true, the _should_force_execution gate
+# that re-adds Execute_Ready_Job whenever score_execute > 0 is bypassed,
+# so the agent's decisions rest on its scoring rule alone.
+stripped_utility_agent:
+  disable_force_execute_guard: true
 
 # ===========================================================================
 # Sweep / Pareto study

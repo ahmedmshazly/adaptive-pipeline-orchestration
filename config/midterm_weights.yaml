@@ -192,9 +192,8 @@ utility_agent:
 rl:
   algorithm: reinforce_with_baseline
   reward: shared_episode_utility
-  gamma_discount: 0.99
+  delta_discount: 0.99
   entropy_coef: 0.01
-  value_loss_coef: 0.5
   learning_rate: 3.0e-4
   optimizer: adam
   grad_clip_norm: 1.0
@@ -213,9 +212,24 @@ rl:
     type: mlp
     hidden_sizes: [64, 64]
     activation: tanh
-  training_seed_list: [100, 101, 102]
+  training_seeds:
+    kind: range
+    start: 300
+    stop: 1000
+  validation_seeds:
+    kind: range
+    start: 250
+    stop: 300
+  test_seeds:
+    kind: range
+    start: 200
+    stop: 250
+  initialisation_seeds: [7, 11, 13]
   eval_every_updates: 25
   checkpoint_every_updates: 50
+
+stripped_utility_agent:
+  disable_force_execute_guard: true
 
 sweep:
   alpha_grid: [0.5, 1.0, 2.0, 4.0]
