@@ -24,12 +24,20 @@ from .sim_environment import (
 class UtilityBasedAgent:
     name = "Utility-Based Agent (Non-Learning Baseline)"
 
-    def __init__(self, cfg: RunConfig) -> None:
+    def __init__(
+        self,
+        cfg: RunConfig,
+        *,
+        force_execute_guard_enabled: bool = True,
+    ) -> None:
         self.cfg = cfg
         self.u: UtilityWeights = cfg.utility
         self.w: UtilityAgentConfig = cfg.utility_agent
         self.cluster_cfg = cfg.simulator.cluster
         self.cost_cfg = cfg.simulator.cost
+        # When False this collapses the agent into the stripped variant
+        # (paper §4.3.7, §5.6). The rest of the scoring rule is unchanged.
+        self.force_execute_guard_enabled = bool(force_execute_guard_enabled)
 
     # ---- policy --------------------------------------------------------------
     def choose_action(self, state: EpisodeState) -> str:
@@ -39,7 +47,9 @@ class UtilityBasedAgent:
         score_by_action = {action: score for action, score in scored}
         scored.sort(key=lambda item: item[1], reverse=True)
 
-        if self._should_force_execution(state, score_by_action):
+        if self.force_execute_guard_enabled and self._should_force_execution(
+            state, score_by_action
+        ):
             top_action = scored[0][0]
             if top_action in {"Reprioritize_Queue", "Pause_LowPriority_Job", "Defer_Job"}:
                 return "Execute_Ready_Job"
@@ -258,6 +268,34 @@ def run_utility_episode(cfg: RunConfig, seed: int) -> EpisodeMetrics:
 
 def run_many_utility_episodes(cfg: RunConfig, seeds):
     return run_many_episodes(cfg=cfg, agent_factory=build_utility_agent, seeds=seeds)
+
+
+class StrippedUtilityBasedAgent(UtilityBasedAgent):
+    """Utility-Based agent with the force-execute guard bypassed.
+
+    Identical scoring rule to :class:`UtilityBasedAgent`; the only change is
+    that :meth:`choose_action` does not re-add Execute_Ready_Job when the
+    guard would have fired. See paper §4.3.7 and §5.6.
+    """
+
+    name = "Stripped Utility-Based Agent"
+
+    def __init__(self, cfg: RunConfig) -> None:
+        super().__init__(cfg, force_execute_guard_enabled=False)
+
+
+def build_stripped_utility_agent(cfg: RunConfig) -> StrippedUtilityBasedAgent:
+    return StrippedUtilityBasedAgent(cfg)
+
+
+def run_stripped_utility_episode(cfg: RunConfig, seed: int) -> EpisodeMetrics:
+    return run_episode(cfg=cfg, agent_factory=build_stripped_utility_agent, seed=seed)
+
+
+def run_many_stripped_utility_episodes(cfg: RunConfig, seeds):
+    return run_many_episodes(
+        cfg=cfg, agent_factory=build_stripped_utility_agent, seeds=seeds
+    )
 
 
 def _demo() -> None:
