@@ -304,9 +304,8 @@ class NetworkConfig:
 class RLConfig:
     algorithm: str
     reward: str
-    gamma_discount: float
+    delta_discount: float  # was gamma_discount before Phase 4 notational lock
     entropy_coef: float
-    value_loss_coef: float
     learning_rate: float
     optimizer: str
     grad_clip_norm: float
@@ -317,9 +316,18 @@ class RLConfig:
     sequence_specific_baseline: bool
     curriculum: CurriculumConfig
     network: NetworkConfig
-    training_seed_list: Tuple[int, ...]
+    # Three-pool seed partitioning per paper §4.3.6.
+    training_seeds: Tuple[int, ...]
+    validation_seeds: Tuple[int, ...]
+    test_seeds: Tuple[int, ...]
+    initialisation_seeds: Tuple[int, ...]
     eval_every_updates: int
     checkpoint_every_updates: int
+
+
+@dataclass(frozen=True)
+class StrippedUtilityAgentConfig:
+    disable_force_execute_guard: bool
 
 
 @dataclass(frozen=True)
@@ -356,6 +364,7 @@ class RunConfig:
     utility: UtilityWeights
     reflex_agent: ReflexAgentConfig
     utility_agent: UtilityAgentConfig
+    stripped_utility_agent: StrippedUtilityAgentConfig
     rl: RLConfig
     sweep: SweepConfig
     raw: Mapping[str, Any] = field(repr=False)
@@ -454,6 +463,35 @@ def _parse_simulator(raw: Mapping[str, Any]) -> SimulatorConfig:
     )
 
 
+def _materialise_seed_pool(spec: Any) -> Tuple[int, ...]:
+    """Convert a YAML seed-pool spec into a tuple of ints.
+
+    Accepted forms:
+    - list of ints: ``[100, 101, 102]``
+    - range dict:   ``{kind: range, start: 300, stop: 1000}``
+    """
+    if isinstance(spec, list):
+        return tuple(int(x) for x in spec)
+    if isinstance(spec, dict):
+        kind = str(spec.get("kind", "range"))
+        if kind == "range":
+            start = int(spec["start"])
+            stop = int(spec["stop"])
+            return tuple(range(start, stop))
+        raise ValueError(f"unknown seed-pool kind: {kind}")
+    raise ValueError(f"unsupported seed-pool spec: {spec!r}")
+
+
+_RL_STRUCTURED_KEYS: Tuple[str, ...] = (
+    "curriculum",
+    "network",
+    "training_seeds",
+    "validation_seeds",
+    "test_seeds",
+    "initialisation_seeds",
+)
+
+
 def _parse_rl(raw: Mapping[str, Any]) -> RLConfig:
     stages = tuple(CurriculumStage(**stage) for stage in raw["curriculum"]["stages"])
     curriculum = CurriculumConfig(enabled=bool(raw["curriculum"]["enabled"]), stages=stages)
@@ -462,15 +500,36 @@ def _parse_rl(raw: Mapping[str, Any]) -> RLConfig:
         hidden_sizes=_as_tuple(raw["network"]["hidden_sizes"]),
         activation=str(raw["network"]["activation"]),
     )
+    # Backwards-friendly guard rails: fail fast on pre-Phase-4 keys rather
+    # than silently ignoring them.
+    if "gamma_discount" in raw:
+        raise ValueError(
+            "rl.gamma_discount was renamed to rl.delta_discount in Phase 4 "
+            "(paper §4.3 notational lock)."
+        )
+    if "value_loss_coef" in raw:
+        raise ValueError(
+            "rl.value_loss_coef was removed in Phase 4; the sequence-specific "
+            "baseline is the sole variance-reduction mechanism (paper §4.3.1)."
+        )
+    if "training_seed_list" in raw:
+        raise ValueError(
+            "rl.training_seed_list was replaced by rl.training_seeds / "
+            "validation_seeds / test_seeds / initialisation_seeds in Phase 4."
+        )
+
     rl_kwargs = {
         key: raw[key]
         for key in raw
-        if key not in {"curriculum", "network", "training_seed_list"}
+        if key not in _RL_STRUCTURED_KEYS
     }
     return RLConfig(
         curriculum=curriculum,
         network=network,
-        training_seed_list=_as_tuple(raw["training_seed_list"]),
+        training_seeds=_materialise_seed_pool(raw["training_seeds"]),
+        validation_seeds=_materialise_seed_pool(raw["validation_seeds"]),
+        test_seeds=_materialise_seed_pool(raw["test_seeds"]),
+        initialisation_seeds=_as_tuple(raw["initialisation_seeds"]),
         **rl_kwargs,
     )
 
@@ -543,10 +602,15 @@ def build_run_config(raw: Mapping[str, Any]) -> RunConfig:
     utility = _parse_utility(raw["utility"])
     reflex_agent = ReflexAgentConfig(**raw["reflex_agent"])
     utility_agent = UtilityAgentConfig(**raw["utility_agent"])
+    stripped = StrippedUtilityAgentConfig(
+        disable_force_execute_guard=bool(
+            raw.get("stripped_utility_agent", {}).get("disable_force_execute_guard", True)
+        )
+    )
     rl = _parse_rl(raw["rl"])
     sweep = _parse_sweep(raw["sweep"])
 
-    _validate(simulator=simulator, utility=utility)
+    _validate(simulator=simulator, utility=utility, rl=rl)
 
     return RunConfig(
         meta=dict(raw.get("meta", {})),
@@ -556,13 +620,19 @@ def build_run_config(raw: Mapping[str, Any]) -> RunConfig:
         utility=utility,
         reflex_agent=reflex_agent,
         utility_agent=utility_agent,
+        stripped_utility_agent=stripped,
         rl=rl,
         sweep=sweep,
         raw=raw,
     )
 
 
-def _validate(*, simulator: SimulatorConfig, utility: UtilityWeights) -> None:
+def _validate(
+    *,
+    simulator: SimulatorConfig,
+    utility: UtilityWeights,
+    rl: Optional[RLConfig] = None,
+) -> None:
     """Cheap invariant checks so the loader fails fast on bad configs."""
     valid_modes = {
         "node_failure": {"per_step_single_victim", "per_node_bernoulli"},
@@ -592,6 +662,20 @@ def _validate(*, simulator: SimulatorConfig, utility: UtilityWeights) -> None:
     for name in (utility.alpha, utility.beta, utility.gamma):
         if not isinstance(name, float):
             raise ValueError("utility weights must be floats")
+
+    if rl is not None:
+        # Pairwise disjointness of the three RL seed pools is a core
+        # correctness invariant — any overlap would leak information from
+        # training into validation or the held-out test set.
+        train_set = set(rl.training_seeds)
+        val_set = set(rl.validation_seeds)
+        test_set = set(rl.test_seeds)
+        if train_set & val_set:
+            raise ValueError("rl.training_seeds overlaps rl.validation_seeds")
+        if train_set & test_set:
+            raise ValueError("rl.training_seeds overlaps rl.test_seeds")
+        if val_set & test_set:
+            raise ValueError("rl.validation_seeds overlaps rl.test_seeds")
 
 
 def _canonical_yaml_dump(raw: Mapping[str, Any]) -> str:
@@ -666,6 +750,7 @@ __all__ = [
     "SpotPriceConfig",
     "StateVectorConfig",
     "StochasticProcessesConfig",
+    "StrippedUtilityAgentConfig",
     "SweepConfig",
     "SweepEvaluationUtility",
     "SweepReferencePoint",
