@@ -24,7 +24,7 @@ import torch
 
 from ..config import RunConfig
 from ..sim_environment import ACTIONS, EpisodeState
-from .env import STATE_FIELD_ORDER
+from .env import observation_dim, state_field_order
 from .policy import MLPPolicy
 
 
@@ -41,13 +41,14 @@ class RLPolicyAgent:
         self.cfg = cfg
         self.policy = policy.eval()
         self.deterministic = bool(deterministic)
+        self._state_field_order = state_field_order(cfg)
         if label is not None:
             self.name = label
 
     def _observation(self, state: EpisodeState) -> np.ndarray:
         sv = state.state_vector()
         arr = np.array(
-            [getattr(sv, name) for name in STATE_FIELD_ORDER],
+            [getattr(sv, name) for name in self._state_field_order],
             dtype=np.float32,
         )
         return np.clip(arr, 0.0, 1.0)
@@ -69,14 +70,21 @@ def load_policy(
     checkpoint_path: Path,
     hidden_sizes=None,
     activation: Optional[str] = None,
+    state_dim: Optional[int] = None,
 ) -> MLPPolicy:
-    """Rebuild the policy network from a state_dict on disk."""
-    from .env import NUM_ACTIONS, NUM_STATE_FEATURES
+    """Rebuild the policy network from a state_dict on disk.
+
+    The input layer width is taken from :func:`observation_dim(cfg)` unless
+    ``state_dim`` is passed explicitly (useful for loading a Phase-5
+    checkpoint under a Phase-6 config).
+    """
+    from .env import NUM_ACTIONS
 
     sizes = tuple(hidden_sizes) if hidden_sizes is not None else tuple(cfg.rl.network.hidden_sizes)
     act = activation or cfg.rl.network.activation
+    dim = int(state_dim) if state_dim is not None else observation_dim(cfg)
     policy = MLPPolicy(
-        state_dim=NUM_STATE_FEATURES,
+        state_dim=dim,
         num_actions=NUM_ACTIONS,
         hidden_sizes=sizes,
         activation=act,

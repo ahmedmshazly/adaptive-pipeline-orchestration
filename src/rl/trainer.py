@@ -27,7 +27,7 @@ from torch import nn, optim
 
 from ..config import RunConfig
 from .baseline import discounted_returns, sequence_specific_baseline
-from .env import NUM_ACTIONS, NUM_STATE_FEATURES, OrchestrationEnv
+from .env import NUM_ACTIONS, OrchestrationEnv, observation_dim
 from .policy import MLPPolicy
 
 
@@ -234,7 +234,7 @@ def train(
     np.random.seed(int(training_cfg.init_seed))
 
     policy = MLPPolicy(
-        state_dim=NUM_STATE_FEATURES,
+        state_dim=observation_dim(cfg),
         num_actions=NUM_ACTIONS,
         hidden_sizes=training_cfg.network_hidden_sizes,
         activation=training_cfg.network_activation,
