@@ -31,6 +31,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--smoothing", type=int, default=10)
+    parser.add_argument(
+        "--title",
+        type=str,
+        default=None,
+        help="Override the top-panel title (default: Phase-5 style).",
+    )
     return parser.parse_args()
 
 
@@ -77,8 +83,11 @@ def main() -> None:
 
     ax_top.set_ylabel("mean episode return")
     ax_top.set_xlabel("policy-gradient update")
+    default_title = (
+        f"Phase-5 training curves (3 init seeds, {args.smoothing}-update moving avg.)"
+    )
     ax_top.set_title(
-        f"Phase-5 training curves (3 init seeds, {args.smoothing}-update moving avg.)",
+        args.title or default_title,
         fontsize=12,
         fontweight="bold",
     )
