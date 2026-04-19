@@ -15,7 +15,7 @@ PYTEST ?= pytest
 RUN_ID_ARG := $(if $(RUN_ID),--run-id $(RUN_ID),)
 OUT_ROOT_ARG := $(if $(OUT_ROOT),--out-root $(OUT_ROOT),)
 
-.PHONY: help install test baseline baseline-train baseline-test sweep train figs clean phase2 phase2-aggregate phase2-figs phase2-sanity phase3 phase3-figs
+.PHONY: help install test baseline baseline-train baseline-test sweep train figs clean phase2 phase2-aggregate phase2-figs phase2-sanity phase3 phase3-figs phase4-baseline phase4-smoke phase4-figs
 
 help:
 	@echo "make install        - install python dependencies"
@@ -26,6 +26,9 @@ help:
 	@echo "make phase2-sanity  - re-run seeds 0..9 with midterm weights; diff against canonical_midterm"
 	@echo "make phase3         - Phase-3: 80-cell (α, β, γ) sweep x 20 seeds (100..119)"
 	@echo "make phase3-figs    - Pareto fronts + best-fixed-weight selection for phase3 run"
+	@echo "make phase4-baseline - Phase-4 3-agent baseline (Reflex + full UB + stripped UB, n=50)"
+	@echo "make phase4-smoke   - Phase-4 RL smoke training (10k env steps, stage-1 only, seed 7)"
+	@echo "make phase4-figs    - Learning-curve figure + 3-agent baseline table for phase4 runs"
 	@echo "make sweep          - (α, β, γ) Pareto sweep (older scaffold)"
 	@echo "make train          - train the Self-Learning Utility-Based agent (scaffolded)"
 	@echo "make figs           - regenerate paper figures from committed CSVs"
@@ -85,6 +88,21 @@ phase3:
 
 phase3-figs:
 	$(PYTHON) -m scripts.figs.phase3_pareto --run-dir $(PHASE3_RUN_DIR) --selection-rule $(PHASE3_SELECTION_RULE)
+
+PHASE4_BASELINE_RUN_ID ?= phase4_baseline_n50
+PHASE4_BASELINE_RUN_DIR := results/$(PHASE4_BASELINE_RUN_ID)
+PHASE4_SMOKE_RUN_ID ?= phase4_rl_smoke
+PHASE4_SMOKE_RUN_DIR := results/$(PHASE4_SMOKE_RUN_ID)
+
+phase4-baseline:
+	$(PYTHON) -m scripts.phase4_baseline --config $(CONFIG) --run-id $(PHASE4_BASELINE_RUN_ID)
+	$(PYTHON) -m scripts.phase4_aggregate --run-dir $(PHASE4_BASELINE_RUN_DIR)
+
+phase4-smoke:
+	$(PYTHON) -m scripts.train_rl --config $(CONFIG) --run-id $(PHASE4_SMOKE_RUN_ID) --stage 1 --max-env-steps 10000
+
+phase4-figs:
+	$(PYTHON) -m scripts.figs.phase4_learning_curve --run-dir $(PHASE4_SMOKE_RUN_DIR) || true
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +
