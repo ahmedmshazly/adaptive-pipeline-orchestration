@@ -1,0 +1,25 @@
+lhs,rhs,metric,n_pairs,n_nonzero,mean_delta,median_delta,statistic,p_value
+Utility-Based Agent (Non-Learning Baseline),Reflex Agent,total_utility,50,50,-9.466804,-7.8089,406.0,0.024847675451864504
+Utility-Based Agent (Non-Learning Baseline),Reflex Agent,completion_rate,50,48,-0.1124,-0.07,32.5,1.2042582887413727e-08
+Utility-Based Agent (Non-Learning Baseline),Reflex Agent,value_weighted_completion_rate,50,50,-0.101432,-0.0541,35.0,7.65609797781508e-12
+Utility-Based Agent (Non-Learning Baseline),Reflex Agent,uncapped_completion_rate,50,47,-0.0236,-0.02,276.5,0.0023143250976039014
+Utility-Based Agent (Non-Learning Baseline),Reflex Agent,failure_rate,50,45,-0.0188,-0.02,230.5,0.001171900030506009
+Utility-Based Agent (Non-Learning Baseline),Reflex Agent,total_completed_value,50,50,-30.3712,-15.925,35.0,7.65609797781508e-12
+Utility-Based Agent (Non-Learning Baseline),Reflex Agent,total_compute_cost,50,50,-190.24396,-180.815,107.0,1.6183291151605772e-08
+Utility-Based Agent (Non-Learning Baseline),Reflex Agent,avg_compute_cost_per_step,50,50,-0.634138,-0.6027,107.0,1.6183291151605772e-08
+Stripped Utility-Based Agent,Reflex Agent,total_utility,50,50,-120.990852,-115.7851,0.0,1.7763568394002505e-15
+Stripped Utility-Based Agent,Reflex Agent,completion_rate,50,50,-0.6366,-0.64,0.0,7.082179956145567e-10
+Stripped Utility-Based Agent,Reflex Agent,value_weighted_completion_rate,50,50,-0.696978,-0.699,0.0,7.550097219539461e-10
+Stripped Utility-Based Agent,Reflex Agent,uncapped_completion_rate,50,50,-0.8118,-0.81,0.0,7.072513880985084e-10
+Stripped Utility-Based Agent,Reflex Agent,failure_rate,50,50,-0.1452,-0.135,0.0,7.278010941716569e-10
+Stripped Utility-Based Agent,Reflex Agent,total_completed_value,50,50,-209.9578,-210.2,0.0,7.555220876380673e-10
+Stripped Utility-Based Agent,Reflex Agent,total_compute_cost,50,50,-744.46948,-769.894,0.0,1.7763568394002505e-15
+Stripped Utility-Based Agent,Reflex Agent,avg_compute_cost_per_step,50,50,-2.48156,-2.5663,0.0,1.7763568394002505e-15
+Utility-Based Agent (Non-Learning Baseline),Stripped Utility-Based Agent,total_utility,50,50,111.524048,112.6944,0.0,1.7763568394002505e-15
+Utility-Based Agent (Non-Learning Baseline),Stripped Utility-Based Agent,completion_rate,50,50,0.5242,0.535,0.0,7.478692979574153e-10
+Utility-Based Agent (Non-Learning Baseline),Stripped Utility-Based Agent,value_weighted_completion_rate,50,50,0.595546,0.60295,0.0,7.555220876380673e-10
+Utility-Based Agent (Non-Learning Baseline),Stripped Utility-Based Agent,uncapped_completion_rate,50,50,0.7882,0.78,0.0,7.177863863316802e-10
+Utility-Based Agent (Non-Learning Baseline),Stripped Utility-Based Agent,failure_rate,50,50,0.1264,0.12,0.0,7.159936895689025e-10
+Utility-Based Agent (Non-Learning Baseline),Stripped Utility-Based Agent,total_completed_value,50,50,179.5866,184.845,0.0,1.7763568394002505e-15
+Utility-Based Agent (Non-Learning Baseline),Stripped Utility-Based Agent,total_compute_cost,50,50,554.22552,581.631,0.0,1.7763568394002505e-15
+Utility-Based Agent (Non-Learning Baseline),Stripped Utility-Based Agent,avg_compute_cost_per_step,50,50,1.847422,1.93875,0.0,1.7763568394002505e-15
