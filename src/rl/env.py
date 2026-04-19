@@ -51,7 +51,7 @@ from ..sim_environment import (
 )
 
 
-STATE_FIELD_ORDER: Tuple[str, ...] = (
+PHASE5_STATE_FIELD_ORDER: Tuple[str, ...] = (
     "cpu_load",
     "ram_available",
     "queue_depth",
@@ -61,9 +61,37 @@ STATE_FIELD_ORDER: Tuple[str, ...] = (
     "deadline_urgency",
     "recent_failures",
 )
+PHASE6_V1_STATE_FIELD_ORDER: Tuple[str, ...] = PHASE5_STATE_FIELD_ORDER + (
+    "queue_len_abs_norm",
+    "mean_remaining_work",
+    "max_deadline_urgency",
+    "mean_job_value",
+    "max_job_value",
+    "spot_price_forecast",
+)
 
-NUM_STATE_FEATURES = len(STATE_FIELD_ORDER)
+# Kept as a module-level constant for backwards compatibility with Phase-5
+# scripts / tests. New code should call :func:`state_field_order(cfg)`.
+STATE_FIELD_ORDER: Tuple[str, ...] = PHASE5_STATE_FIELD_ORDER
+
 NUM_ACTIONS = len(ACTIONS)
+# Default feature count is the Phase-5 8. The source-of-truth for the
+# actual width used by the policy is :func:`observation_dim(cfg)`.
+NUM_STATE_FEATURES = len(PHASE5_STATE_FIELD_ORDER)
+
+
+def state_field_order(cfg: "RunConfig") -> Tuple[str, ...]:
+    """Return the ordered tuple of StateVector attribute names used when
+    building observations, depending on ``cfg.state_v2.use_richer_state``.
+    """
+    if cfg.state_v2.use_richer_state:
+        return PHASE6_V1_STATE_FIELD_ORDER
+    return PHASE5_STATE_FIELD_ORDER
+
+
+def observation_dim(cfg: "RunConfig") -> int:
+    """Single source of truth for the policy's input layer width."""
+    return len(state_field_order(cfg))
 
 
 @dataclass
@@ -121,8 +149,15 @@ class OrchestrationEnv(gym.Env):
         self.memoryless = bool(memoryless)
         self.eval_weights = eval_weights or evaluation_weights_from_config(self.cfg)
 
+        # Phase-6 V1: observation width is driven by cfg.state_v2.
+        self._state_field_order = state_field_order(self.cfg)
+        self._observation_dim = len(self._state_field_order)
+
         self.observation_space = spaces.Box(
-            low=0.0, high=1.0, shape=(NUM_STATE_FEATURES,), dtype=np.float32
+            low=0.0,
+            high=1.0,
+            shape=(self._observation_dim,),
+            dtype=np.float32,
         )
         self.action_space = spaces.Discrete(NUM_ACTIONS)
 
@@ -228,10 +263,13 @@ class OrchestrationEnv(gym.Env):
     def _observe(self) -> np.ndarray:
         sv = self._state.state_vector()
         arr = np.array(
-            [getattr(sv, name) for name in STATE_FIELD_ORDER],
+            [getattr(sv, name) for name in self._state_field_order],
             dtype=np.float32,
         )
         # Clip defensively in case rounding + normalisation ever strays.
+        # Spot-price fields have a nominal lower bound of 0.1, but the
+        # observation-space lower bound is 0.0 so clipping to [0, 1] is
+        # always safe for the policy.
         return np.clip(arr, 0.0, 1.0)
 
     def _normalised_recent_failures(self) -> float:
@@ -262,7 +300,11 @@ __all__ = [
     "NUM_ACTIONS",
     "NUM_STATE_FEATURES",
     "OrchestrationEnv",
+    "PHASE5_STATE_FIELD_ORDER",
+    "PHASE6_V1_STATE_FIELD_ORDER",
     "STATE_FIELD_ORDER",
     "evaluation_weights_from_config",
     "make_env",
+    "observation_dim",
+    "state_field_order",
 ]
