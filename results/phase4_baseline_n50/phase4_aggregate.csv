@@ -1,0 +1,25 @@
+agent,metric,n,mean,std,ci95_low,ci95_high
+Reflex Agent,total_utility,50,120.990852,22.88893,114.813702,127.172776
+Reflex Agent,completion_rate,50,0.6366,0.030211,0.6284,0.645
+Reflex Agent,value_weighted_completion_rate,50,0.696978,0.038134,0.686544,0.707342
+Reflex Agent,uncapped_completion_rate,50,0.8118,0.042508,0.8002,0.8234
+Reflex Agent,failure_rate,50,0.1452,0.040266,0.1344,0.1562
+Reflex Agent,total_completed_value,50,209.9578,13.053136,206.40955,213.57243
+Reflex Agent,total_compute_cost,50,744.46948,217.40945,684.666982,803.787996
+Reflex Agent,avg_compute_cost_per_step,50,2.48156,0.724694,2.281405,2.680166
+Utility-Based Agent (Non-Learning Baseline),total_utility,50,111.524048,33.237911,102.338102,120.456994
+Utility-Based Agent (Non-Learning Baseline),completion_rate,50,0.5242,0.102282,0.4956,0.551605
+Utility-Based Agent (Non-Learning Baseline),value_weighted_completion_rate,50,0.595546,0.096452,0.568957,0.621902
+Utility-Based Agent (Non-Learning Baseline),uncapped_completion_rate,50,0.7882,0.040542,0.7774,0.7992
+Utility-Based Agent (Non-Learning Baseline),failure_rate,50,0.1264,0.035037,0.1168,0.136
+Utility-Based Agent (Non-Learning Baseline),total_completed_value,50,179.5866,30.29569,171.135045,187.750005
+Utility-Based Agent (Non-Learning Baseline),total_compute_cost,50,554.22552,120.715324,519.964063,587.087915
+Utility-Based Agent (Non-Learning Baseline),avg_compute_cost_per_step,50,1.847422,0.402384,1.736763,1.956828
+Stripped Utility-Based Agent,total_utility,50,0.0,0.0,0.0,0.0
+Stripped Utility-Based Agent,completion_rate,50,0.0,0.0,0.0,0.0
+Stripped Utility-Based Agent,value_weighted_completion_rate,50,0.0,0.0,0.0,0.0
+Stripped Utility-Based Agent,uncapped_completion_rate,50,0.0,0.0,0.0,0.0
+Stripped Utility-Based Agent,failure_rate,50,0.0,0.0,0.0,0.0
+Stripped Utility-Based Agent,total_completed_value,50,0.0,0.0,0.0,0.0
+Stripped Utility-Based Agent,total_compute_cost,50,0.0,0.0,0.0,0.0
+Stripped Utility-Based Agent,avg_compute_cost_per_step,50,0.0,0.0,0.0,0.0

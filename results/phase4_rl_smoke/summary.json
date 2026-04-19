@@ -1,0 +1,15 @@
+{
+  "env_steps_total": 10060,
+  "first_window_mean_loss": -0.0028360199183225633,
+  "first_window_mean_return": 7.914969999999999,
+  "last_window_mean_loss": -0.025716869905591012,
+  "last_window_mean_return": 9.283329999999998,
+  "learned_exceeds_random": true,
+  "loss_improvement": 0.02288084998726845,
+  "num_updates": 21,
+  "random_baseline_mean_return": 7.64093125,
+  "random_baseline_num_episodes": 32,
+  "random_baseline_std_return": 7.774880997510094,
+  "return_improvement": 1.3683599999999982,
+  "window": 5
+}
