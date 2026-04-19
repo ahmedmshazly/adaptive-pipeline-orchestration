@@ -20,8 +20,14 @@ def _fresh_state(cfg, seed=9, num_jobs=20):
     return generator.generate_episode()
 
 
-def test_state_vector_has_all_eight_fields():
-    fields = {
+def test_state_vector_has_all_phase5_fields():
+    """All eight Phase-5 fields must still exist on the dataclass.
+
+    After Phase 6 V1 the dataclass has 14 fields total; we assert the 8
+    Phase-5 fields are all present rather than requiring exactly 8, so
+    adding new Phase-6 fields is a non-breaking change.
+    """
+    phase5_fields = {
         "cpu_load",
         "ram_available",
         "queue_depth",
@@ -34,7 +40,7 @@ def test_state_vector_has_all_eight_fields():
     cfg = load_config()
     sv = _fresh_state(cfg).state_vector()
     assert isinstance(sv, StateVector)
-    assert set(sv.__dict__.keys()) == fields
+    assert phase5_fields.issubset(set(sv.__dict__.keys()))
 
 
 def test_state_vector_values_are_in_range():
@@ -57,8 +63,10 @@ def test_state_vector_as_dict_uses_legacy_keys():
     cfg = load_config()
     sv = _fresh_state(cfg).state_vector()
     plain = sv.as_dict()
-    # Exactly the midterm's Title_Case observation keys.
-    assert set(plain.keys()) == {
+    # The midterm's Title_Case keys are a subset of the full dict in
+    # Phase 6; assert presence rather than equality so V1 fields don't
+    # break this check.
+    phase5_keys = {
         "CPU_Load",
         "RAM_Available",
         "Queue_Depth",
@@ -68,6 +76,7 @@ def test_state_vector_as_dict_uses_legacy_keys():
         "Deadline_Urgency",
         "Recent_Failures",
     }
+    assert phase5_keys.issubset(set(plain.keys()))
     assert plain["Spot_Price"] == sv.spot_price
     assert plain["Recent_Failures"] == sv.recent_failures
 
