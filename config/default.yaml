@@ -328,6 +328,32 @@ rl:
 stripped_utility_agent:
   disable_force_execute_guard: true
 
+# Phase-6 V1 richer-state representation (paper §6).
+# When use_richer_state=false (default) the observation is the Phase-5
+# 8-dim vector and every agent / training loop behaves exactly as in
+# Phase 5. Regression-guarded by tests/test_regression_phase5.py.
+# When use_richer_state=true the observation is 14-dim: the 8 Phase-5
+# features, followed by the 5 queue features, followed by the
+# 1 spot-price-forecast feature. Order is load-bearing; the policy
+# network's input layer reads its width from observation_dim(cfg).
+state_v2:
+  use_richer_state: false
+  feature_set: "queue_and_forecast"   # "queue_and_forecast" | "queue_and_forecast_and_gnn"
+  queue_features:
+    # Normalisation divisor for queue_len_abs_norm: raw number of active
+    # (not-yet-terminal) jobs, clipped to [0, 1] after division.
+    queue_len_norm: 100.0
+    # Upper bound of the per-job value distribution at workload
+    # generation (matches simulator.workload.job_value_high by default;
+    # exposed separately so state normalisation does not re-read the
+    # simulator block).
+    job_value_max: 5.0
+  forecast:
+    # Exponential moving-average coefficient: new = lambda*price + (1-lambda)*old.
+    ema_lambda: 0.3
+    # Value of the forecast at episode reset, before any spot-price draw.
+    initial_forecast: 0.5
+
 # ===========================================================================
 # Sweep / Pareto study
 # ===========================================================================

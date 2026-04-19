@@ -1,18 +1,15 @@
-# Override file: produces the midterm Table 1 run with (alpha, beta, gamma)
-# pinned to the original (1.0, 0.4, 0.8) rather than the Phase-1 default.
+# Phase-6 V1 override: turns on the 14-dim richer state (paper §6).
+# Every other setting matches config/default.yaml exactly. Use via e.g.
 #
-# This is a full, self-contained config (the loader does not merge partials).
-# Any field not listed here must match config/default.yaml exactly.
+#   make phase6-smoke-v1 CONFIG=config/state_v2.yaml
+#   make phase6-train-v1 CONFIG=config/state_v2.yaml PHASE6_INIT_SEED=7
 #
-# Usage:
-#   python -m src.compare_baselines --config config/midterm_weights.yaml \
-#       --seed-group midterm_baseline --run-id canonical_midterm_rerun
-#
-# It reproduces results/canonical_midterm/ bit-for-bit (same commit SHA,
-# same seed list, same stochastic streams).
+# Flipping use_richer_state back to false in this file (or passing
+# config/default.yaml on the CLI) restores Phase-5 behaviour byte-for-byte,
+# verified by tests/test_regression_phase5.py.
 
 meta:
-  config_name: midterm_weights
+  config_name: state_v2
   schema_version: 2
 
 experiment:
@@ -28,13 +25,7 @@ seeds:
   midterm_baseline: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 simulator:
-  actions:
-    - Execute_Ready_Job
-    - Defer_Job
-    - Scale_Up
-    - Scale_Down
-    - Reprioritize_Queue
-    - Pause_LowPriority_Job
+  actions: [Execute_Ready_Job, Defer_Job, Scale_Up, Scale_Down, Reprioritize_Queue, Pause_LowPriority_Job]
   cluster:
     base_cpu_capacity: 10
     base_ram_capacity: 16
@@ -45,28 +36,14 @@ simulator:
     initial_spot_price_low: 0.3
     initial_spot_price_high: 0.7
   action_params:
-    Execute_Ready_Job:
-      selection_policy: value_times_priority
-      max_launches_per_step: 1
-    Defer_Job:
-      duration_steps: 1
-    Scale_Up:
-      cpu_delta: 3
-      ram_delta: 4
-      duration_steps: 3
-    Scale_Down:
-      cpu_delta: 2
-      ram_delta: 2
-    Reprioritize_Queue:
-      bump: 0.05
-      cap: 1.0
-    Pause_LowPriority_Job:
-      priority_threshold: 0.4
-      max_jobs: 2
+    Execute_Ready_Job: {selection_policy: value_times_priority, max_launches_per_step: 1}
+    Defer_Job: {duration_steps: 1}
+    Scale_Up: {cpu_delta: 3, ram_delta: 4, duration_steps: 3}
+    Scale_Down: {cpu_delta: 2, ram_delta: 2}
+    Reprioritize_Queue: {bump: 0.05, cap: 1.0}
+    Pause_LowPriority_Job: {priority_threshold: 0.4, max_jobs: 2}
   stochastic_processes:
-    node_failure:
-      mode: per_step_single_victim
-      prob: 0.05
+    node_failure: {mode: per_step_single_victim, prob: 0.05}
     data_spike:
       mode: additive_bump
       prob: 0.08
@@ -93,10 +70,7 @@ simulator:
       Scale_Down: 0.0
       Reprioritize_Queue: 0.0
       Pause_LowPriority_Job: 0.0
-  state_vector:
-    queue_depth_norm: 20.0
-    ready_nodes_norm: 20.0
-    recent_failures_norm: 5.0
+  state_vector: {queue_depth_norm: 20.0, ready_nodes_norm: 20.0, recent_failures_norm: 5.0}
   workload:
     duration_factors: [0.8, 1.0, 1.2, 1.5]
     cpu_factors: [1.0, 1.0, 1.5]
@@ -128,12 +102,9 @@ simulator:
 
 utility:
   alpha: 1.0
-  beta: 0.4
-  gamma: 0.8
-  midterm_values:
-    alpha: 1.0
-    beta: 0.4
-    gamma: 0.8
+  beta: 0.1
+  gamma: 1.0
+  midterm_values: {alpha: 1.0, beta: 0.4, gamma: 0.8}
 
 reflex_agent:
   scale_down_spot_price_threshold: 0.8
@@ -189,6 +160,22 @@ utility_agent:
   stress_guard_failure_limit: 0.6
   stress_guard_price_limit: 0.9
 
+stripped_utility_agent:
+  disable_force_execute_guard: true
+
+state_v2:
+  # THIS is the only difference from config/default.yaml: the richer-state
+  # flag is flipped on. Observation width becomes 14; the six V1 features
+  # append after the 8 Phase-5 features per StateVector.PHASE6_V1_FIELD_ORDER.
+  use_richer_state: true
+  feature_set: "queue_and_forecast"
+  queue_features:
+    queue_len_norm: 100.0
+    job_value_max: 5.0
+  forecast:
+    ema_lambda: 0.3
+    initial_forecast: 0.5
+
 rl:
   algorithm: reinforce_with_baseline
   reward: shared_episode_utility
@@ -212,45 +199,19 @@ rl:
     type: mlp
     hidden_sizes: [64, 64]
     activation: tanh
-  training_seeds:
-    kind: range
-    start: 300
-    stop: 1000
-  validation_seeds:
-    kind: range
-    start: 250
-    stop: 300
-  test_seeds:
-    kind: range
-    start: 200
-    stop: 250
+  training_seeds: {kind: range, start: 300, stop: 1000}
+  validation_seeds: {kind: range, start: 250, stop: 300}
+  test_seeds: {kind: range, start: 200, stop: 250}
   initialisation_seeds: [7, 11, 13]
   eval_every_updates: 25
   checkpoint_every_updates: 50
-
-stripped_utility_agent:
-  disable_force_execute_guard: true
-
-state_v2:
-  use_richer_state: false
-  feature_set: "queue_and_forecast"
-  queue_features:
-    queue_len_norm: 100.0
-    job_value_max: 5.0
-  forecast:
-    ema_lambda: 0.3
-    initial_forecast: 0.5
 
 sweep:
   alpha_grid: [0.5, 1.0, 2.0, 4.0]
   beta_grid:  [0.05, 0.1, 0.25, 0.5, 1.0]
   gamma_grid: [0.5, 1.0, 2.0, 4.0]
-  seeds: [100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
-          110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+  seeds: [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
   reference_points:
     midterm_utility: {alpha: 1.0, beta: 0.4, gamma: 0.8}
     phase1_default:  {alpha: 1.0, beta: 0.1, gamma: 1.0}
-  evaluation_utility:
-    alpha: 1.0
-    beta: 0.1
-    gamma: 1.0
+  evaluation_utility: {alpha: 1.0, beta: 0.1, gamma: 1.0}
