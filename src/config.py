@@ -331,6 +331,26 @@ class StrippedUtilityAgentConfig:
 
 
 @dataclass(frozen=True)
+class StateV2QueueFeatures:
+    queue_len_norm: float
+    job_value_max: float
+
+
+@dataclass(frozen=True)
+class StateV2Forecast:
+    ema_lambda: float
+    initial_forecast: float
+
+
+@dataclass(frozen=True)
+class StateV2Config:
+    use_richer_state: bool
+    feature_set: str
+    queue_features: StateV2QueueFeatures
+    forecast: StateV2Forecast
+
+
+@dataclass(frozen=True)
 class SweepReferencePoint:
     name: str
     alpha: float
@@ -365,6 +385,7 @@ class RunConfig:
     reflex_agent: ReflexAgentConfig
     utility_agent: UtilityAgentConfig
     stripped_utility_agent: StrippedUtilityAgentConfig
+    state_v2: StateV2Config
     rl: RLConfig
     sweep: SweepConfig
     raw: Mapping[str, Any] = field(repr=False)
@@ -607,10 +628,25 @@ def build_run_config(raw: Mapping[str, Any]) -> RunConfig:
             raw.get("stripped_utility_agent", {}).get("disable_force_execute_guard", True)
         )
     )
+    state_v2_raw = dict(raw.get("state_v2", {}))
+    queue_raw = dict(state_v2_raw.get("queue_features", {}))
+    forecast_raw = dict(state_v2_raw.get("forecast", {}))
+    state_v2 = StateV2Config(
+        use_richer_state=bool(state_v2_raw.get("use_richer_state", False)),
+        feature_set=str(state_v2_raw.get("feature_set", "queue_and_forecast")),
+        queue_features=StateV2QueueFeatures(
+            queue_len_norm=float(queue_raw.get("queue_len_norm", 100.0)),
+            job_value_max=float(queue_raw.get("job_value_max", 5.0)),
+        ),
+        forecast=StateV2Forecast(
+            ema_lambda=float(forecast_raw.get("ema_lambda", 0.3)),
+            initial_forecast=float(forecast_raw.get("initial_forecast", 0.5)),
+        ),
+    )
     rl = _parse_rl(raw["rl"])
     sweep = _parse_sweep(raw["sweep"])
 
-    _validate(simulator=simulator, utility=utility, rl=rl)
+    _validate(simulator=simulator, utility=utility, rl=rl, state_v2=state_v2)
 
     return RunConfig(
         meta=dict(raw.get("meta", {})),
@@ -621,6 +657,7 @@ def build_run_config(raw: Mapping[str, Any]) -> RunConfig:
         reflex_agent=reflex_agent,
         utility_agent=utility_agent,
         stripped_utility_agent=stripped,
+        state_v2=state_v2,
         rl=rl,
         sweep=sweep,
         raw=raw,
@@ -632,6 +669,7 @@ def _validate(
     simulator: SimulatorConfig,
     utility: UtilityWeights,
     rl: Optional[RLConfig] = None,
+    state_v2: Optional[StateV2Config] = None,
 ) -> None:
     """Cheap invariant checks so the loader fails fast on bad configs."""
     valid_modes = {
@@ -676,6 +714,23 @@ def _validate(
             raise ValueError("rl.training_seeds overlaps rl.test_seeds")
         if val_set & test_set:
             raise ValueError("rl.validation_seeds overlaps rl.test_seeds")
+
+    if state_v2 is not None:
+        valid_feature_sets = {"queue_and_forecast", "queue_and_forecast_and_gnn"}
+        if state_v2.feature_set not in valid_feature_sets:
+            raise ValueError(f"unknown state_v2.feature_set: {state_v2.feature_set}")
+        # V2 (GNN) is gated on V1 results per the Phase-6 brief §G; fail
+        # loudly if someone tries to enable it in this phase.
+        if state_v2.use_richer_state and state_v2.feature_set == "queue_and_forecast_and_gnn":
+            raise NotImplementedError(
+                "state_v2.feature_set = queue_and_forecast_and_gnn (V2) is "
+                "gated on V1 outcomes; implement V2 in its own phase."
+            )
+        if not 0.0 < state_v2.forecast.ema_lambda <= 1.0:
+            raise ValueError(
+                f"state_v2.forecast.ema_lambda must be in (0, 1], got "
+                f"{state_v2.forecast.ema_lambda}"
+            )
 
 
 def _canonical_yaml_dump(raw: Mapping[str, Any]) -> str:
@@ -748,6 +803,9 @@ __all__ = [
     "SeedsConfig",
     "SimulatorConfig",
     "SpotPriceConfig",
+    "StateV2Config",
+    "StateV2Forecast",
+    "StateV2QueueFeatures",
     "StateVectorConfig",
     "StochasticProcessesConfig",
     "StrippedUtilityAgentConfig",
