@@ -122,6 +122,10 @@ class ClusterState:
     # decouples decay from cfg defaults in case action parameters change.
     last_scale_up_cpu_delta: int = 0
     last_scale_up_ram_delta: int = 0
+    # Phase-6 V1 spot-price forecast. Exponential moving average of
+    # ``spot_price`` updated inside ``_apply_spot_price_walk``. Initialised
+    # to ``cfg.state_v2.forecast.initial_forecast`` on episode reset.
+    spot_price_forecast: float = 0.0
 
 
 @dataclass
@@ -169,8 +173,12 @@ class EpisodeState:
     def state_vector(self) -> StateVector:
         """Return the observation as a typed :class:`~src.state.StateVector`.
 
-        The numeric values match the midterm's ``dict[str, float]``
-        observation exactly (same rounding, same clipping).
+        In Phase-5 mode (``cfg.state_v2.use_richer_state=False``) the six
+        Phase-6 V1 fields default to 0.0; the 8-dim Phase-5 observation is
+        numerically identical to Phase 5's. In Phase-6 V1 mode the six
+        extra fields are populated according to the formulas in
+        :class:`~src.state.StateVector` and appended after the Phase-5
+        block so the 14-dim ordering is fixed and documented.
         """
         ready = self.ready_tasks()
         active_jobs = [job for job in self.jobs if not job.failed and not job.completed]
@@ -187,6 +195,25 @@ class EpisodeState:
             avg_priority = 0.0
             avg_urgency = 0.0
 
+        # ---- Phase-6 V1 features (only populated when flag is on) ----
+        state_v2 = self.cfg.state_v2
+        if state_v2.use_richer_state:
+            (
+                queue_len_abs_norm,
+                mean_remaining_work,
+                max_deadline_urgency,
+                mean_job_value,
+                max_job_value,
+                spot_price_forecast,
+            ) = self._compute_v1_features(active_jobs)
+        else:
+            queue_len_abs_norm = 0.0
+            mean_remaining_work = 0.0
+            max_deadline_urgency = 0.0
+            mean_job_value = 0.0
+            max_job_value = 0.0
+            spot_price_forecast = 0.0
+
         return StateVector(
             cpu_load=round(self.cpu_in_use() / max(self.cluster.cpu_capacity, 1), 4),
             ram_available=round(self.available_ram() / max(self.cluster.ram_capacity, 1), 4),
@@ -196,6 +223,85 @@ class EpisodeState:
             job_priority=round(avg_priority, 4),
             deadline_urgency=round(avg_urgency, 4),
             recent_failures=min(self.cluster.recent_failures / sv.recent_failures_norm, 1.0),
+            queue_len_abs_norm=queue_len_abs_norm,
+            mean_remaining_work=mean_remaining_work,
+            max_deadline_urgency=max_deadline_urgency,
+            mean_job_value=mean_job_value,
+            max_job_value=max_job_value,
+            spot_price_forecast=spot_price_forecast,
+        )
+
+    def _compute_v1_features(
+        self,
+        active_jobs: List["JobInstance"],
+    ) -> Tuple[float, float, float, float, float, float]:
+        """Derive the six Phase-6 V1 features from the current episode.
+
+        Returns ``(queue_len_abs_norm, mean_remaining_work,
+        max_deadline_urgency, mean_job_value, max_job_value,
+        spot_price_forecast)``. When ``active_jobs`` is empty, the first
+        five are ``0.0``; the sixth always reflects the current EMA.
+        """
+        state_v2 = self.cfg.state_v2
+        max_steps = max(self.cfg.experiment.max_steps, 1)
+        sp_min = self.cfg.simulator.stochastic_processes.spot_price.price_min
+        sp_max = self.cfg.simulator.stochastic_processes.spot_price.price_max
+        # Forecast is always defined; clip defensively in case a numerical
+        # path ever leaves the documented [sp_min, sp_max] range.
+        spot_price_forecast = max(
+            sp_min,
+            min(sp_max, round(self.cluster.spot_price_forecast, 4)),
+        )
+
+        if not active_jobs:
+            return (0.0, 0.0, 0.0, 0.0, 0.0, spot_price_forecast)
+
+        # queue_len_abs_norm: active jobs / queue_len_norm, saturated.
+        queue_len_abs_norm = min(
+            len(active_jobs) / state_v2.queue_features.queue_len_norm,
+            1.0,
+        )
+
+        # mean_remaining_work: average remaining_time across non-terminal
+        # tasks of active jobs, normalised by max_steps. Tasks in terminal
+        # (completed / failed) states are excluded because they carry
+        # stale remaining_time values.
+        remaining_times: List[int] = []
+        job_values: List[float] = []
+        urgencies: List[float] = []
+        for job in active_jobs:
+            for task in job.tasks.values():
+                if task.state not in {
+                    "completed",
+                    "failed",
+                }:
+                    remaining_times.append(task.remaining_time)
+            job_values.append(float(job.value))
+            urgencies.append(max(0.0, 1.0 - (job.deadline_steps / max_steps)))
+        if remaining_times:
+            mean_remaining_work = min(
+                (sum(remaining_times) / len(remaining_times)) / max_steps,
+                1.0,
+            )
+        else:
+            mean_remaining_work = 0.0
+
+        max_deadline_urgency = float(max(urgencies)) if urgencies else 0.0
+
+        vmax = max(state_v2.queue_features.job_value_max, 1e-9)
+        mean_job_value = min(
+            (sum(job_values) / len(job_values)) / vmax,
+            1.0,
+        )
+        max_job_value = min(max(job_values) / vmax, 1.0)
+
+        return (
+            round(queue_len_abs_norm, 4),
+            round(mean_remaining_work, 4),
+            round(max_deadline_urgency, 4),
+            round(mean_job_value, 4),
+            round(max_job_value, 4),
+            spot_price_forecast,
         )
 
 
@@ -321,6 +427,10 @@ class WorkloadGenerator:
             cpu_capacity=cluster_cfg.base_cpu_capacity,
             ram_capacity=cluster_cfg.base_ram_capacity,
             spot_price=initial_spot_price,
+            # Phase-6 V1: initial forecast value from config. When richer
+            # state is disabled the field is still populated but never
+            # read, so this is a zero-cost addition for Phase-5 runs.
+            spot_price_forecast=float(self.cfg.state_v2.forecast.initial_forecast),
         )
         episode = EpisodeState(step=0, jobs=jobs, cluster=cluster, cfg=self.cfg)
         episode.ready_tasks()  # prime the initial ready-set
@@ -335,10 +445,17 @@ class WorkloadGenerator:
 # Stochastic processes — one function per process, dispatched by mode.
 # ---------------------------------------------------------------------------
 def _apply_spot_price_walk(state: EpisodeState, rng: np.random.Generator) -> None:
-    """Bounded random walk on ``cluster.spot_price``.
+    """Bounded random walk on ``cluster.spot_price`` + optional forecast EMA.
 
     Formula: ``Δ ∼ U(walk_low, walk_high)``; ``spot_price = clip(round(price + Δ,
     2), price_min, price_max)``.
+
+    Phase-6 V1 (paper §6): also updates ``cluster.spot_price_forecast`` as
+    an EMA of the new spot price:
+        forecast_{t+1} = lambda * spot_price_{t+1} + (1 - lambda) * forecast_t
+    The EMA is maintained regardless of ``state_v2.use_richer_state`` so
+    the forecast column is always available for inspection; the state
+    vector only exposes it when the flag is on.
     """
     config = state.cfg.simulator.stochastic_processes.spot_price
     if config.mode != "bounded_random_walk":
@@ -347,6 +464,11 @@ def _apply_spot_price_walk(state: EpisodeState, rng: np.random.Generator) -> Non
     state.cluster.spot_price = min(
         config.price_max,
         max(config.price_min, round(state.cluster.spot_price + walk, 2)),
+    )
+    lam = float(state.cfg.state_v2.forecast.ema_lambda)
+    state.cluster.spot_price_forecast = (
+        lam * state.cluster.spot_price
+        + (1.0 - lam) * state.cluster.spot_price_forecast
     )
 
 

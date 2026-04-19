@@ -87,6 +87,54 @@ class StateVector:
         state_vector.recent_failures_norm, 1.0)``. The underlying integer
         is bumped on every failure, decremented by 1 every step (floor 0),
         and capped at ``cluster.max_recent_failures = 10``.
+
+    Phase-6 V1 richer-state extensions (all 6 defined below). These are
+    populated only when ``cfg.state_v2.use_richer_state`` is True; the
+    8-dim legacy observation ignores them. Every one is clipped to
+    ``[0, 1]`` and defaults to ``0.0`` when there are no active jobs.
+    Derivation formulas match Phase-6 §2.1.
+
+    - ``queue_len_abs_norm`` — Absolute queue length (active jobs, not
+      tasks) normalised.
+      * **Range:** ``[0.0, 1.0]``.
+      * **Computation:** ``min(|active_jobs| /
+        state_v2.queue_features.queue_len_norm, 1.0)``.
+      * **Purpose:** complements ``queue_depth`` (which measures the
+        ready-task subset saturated at 20). Gives the policy an
+        unsaturated signal for high-job-count regimes.
+
+    - ``mean_remaining_work`` — Average remaining time across the tasks
+      in active jobs (waiting / ready / running / paused), normalised
+      by ``experiment.max_steps``.
+      * **Range:** ``[0.0, 1.0]``.
+      * **Computation:** ``min(mean(task.remaining_time over non-terminal
+        tasks of active jobs) / experiment.max_steps, 1.0)`` or 0.0 when
+        there are no such tasks.
+
+    - ``max_deadline_urgency`` — Maximum deadline urgency across active
+      jobs; complements the mean already in ``deadline_urgency``.
+      * **Range:** ``[0.0, 1.0]``.
+      * **Computation:** ``max(max(0, 1 - job.deadline_steps /
+        experiment.max_steps) for active jobs)`` or 0.0 when none.
+
+    - ``mean_job_value`` — Average per-job value across active jobs,
+      normalised by ``state_v2.queue_features.job_value_max``.
+      * **Range:** ``[0.0, 1.0]``.
+      * **Computation:** ``min(mean(job.value) / job_value_max, 1.0)`` or
+        0.0 when no active jobs.
+
+    - ``max_job_value`` — Maximum per-job value across active jobs,
+      normalised by ``state_v2.queue_features.job_value_max``.
+      * **Range:** ``[0.0, 1.0]``.
+      * **Computation:** ``min(max(job.value) / job_value_max, 1.0)`` or
+        0.0 when no active jobs.
+
+    - ``spot_price_forecast`` — EMA of spot price. Updated every step as
+      ``new = lambda * price + (1 - lambda) * old``; initial value is
+      ``state_v2.forecast.initial_forecast``.
+      * **Range:** ``[events.spot_price_min, events.spot_price_max] =
+        [0.1, 1.0]`` once warmed up; reset value configurable.
+      * **Computation:** ``round(cluster.spot_price_forecast, 4)``.
     """
 
     cpu_load: float
@@ -97,6 +145,15 @@ class StateVector:
     job_priority: float
     deadline_urgency: float
     recent_failures: float
+
+    # Phase-6 V1 extensions. Default to 0.0 so that existing call sites
+    # that construct an 8-field StateVector still produce a valid object.
+    queue_len_abs_norm: float = 0.0
+    mean_remaining_work: float = 0.0
+    max_deadline_urgency: float = 0.0
+    mean_job_value: float = 0.0
+    max_job_value: float = 0.0
+    spot_price_forecast: float = 0.0
 
     # Legacy Title_Case keys used by v0 agent code that indexed the
     # observation dict by string. Keeping them 1:1 with the midterm code's
@@ -110,7 +167,34 @@ class StateVector:
         "job_priority": "Job_Priority",
         "deadline_urgency": "Deadline_Urgency",
         "recent_failures": "Recent_Failures",
+        # Phase-6 fields use snake_case in their Title_Case aliases so the
+        # naming scheme stays internally consistent.
+        "queue_len_abs_norm": "Queue_Len_Abs_Norm",
+        "mean_remaining_work": "Mean_Remaining_Work",
+        "max_deadline_urgency": "Max_Deadline_Urgency",
+        "mean_job_value": "Mean_Job_Value",
+        "max_job_value": "Max_Job_Value",
+        "spot_price_forecast": "Spot_Price_Forecast",
     }
+
+    PHASE5_FIELD_ORDER = (
+        "cpu_load",
+        "ram_available",
+        "queue_depth",
+        "spot_price",
+        "dag_ready_nodes",
+        "job_priority",
+        "deadline_urgency",
+        "recent_failures",
+    )
+    PHASE6_V1_FIELD_ORDER = PHASE5_FIELD_ORDER + (
+        "queue_len_abs_norm",
+        "mean_remaining_work",
+        "max_deadline_urgency",
+        "mean_job_value",
+        "max_job_value",
+        "spot_price_forecast",
+    )
 
     def as_dict(self) -> Dict[str, float]:
         """Return the observation with the midterm's Title_Case keys."""
