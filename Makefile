@@ -15,7 +15,7 @@ PYTEST ?= pytest
 RUN_ID_ARG := $(if $(RUN_ID),--run-id $(RUN_ID),)
 OUT_ROOT_ARG := $(if $(OUT_ROOT),--out-root $(OUT_ROOT),)
 
-.PHONY: help install test baseline baseline-train baseline-test sweep train figs clean phase2 phase2-aggregate phase2-figs phase2-sanity phase3 phase3-figs phase4-baseline phase4-smoke phase4-figs
+.PHONY: help install test baseline baseline-train baseline-test sweep train figs clean phase2 phase2-aggregate phase2-figs phase2-sanity phase3 phase3-figs phase4-baseline phase4-smoke phase4-figs phase5-train phase5-train-all phase5-heldout phase5-aggregate phase5-figs phase5-rollouts phase5-all
 
 help:
 	@echo "make install        - install python dependencies"
@@ -103,6 +103,59 @@ phase4-smoke:
 
 phase4-figs:
 	$(PYTHON) -m scripts.figs.phase4_learning_curve --run-dir $(PHASE4_SMOKE_RUN_DIR) || true
+
+# ---------------------------------------------------------------------------
+# Phase 5 — full RL training + held-out evaluation + figures.
+# ---------------------------------------------------------------------------
+PHASE5_ROOT_DIR := results/phase5
+PHASE5_HELDOUT_DIR := $(PHASE5_ROOT_DIR)/heldout
+PHASE3_RUN_DIR_FOR_PARETO := results/sweep_phase3
+
+PHASE5_INIT_SEED ?= 7
+PHASE5_RUN_ID ?= phase5_rl_seed$(PHASE5_INIT_SEED)
+PHASE5_MAX_ENV_STEPS ?= 0
+
+# Single-seed training. Usage: make phase5-train PHASE5_INIT_SEED=7
+phase5-train:
+	$(PYTHON) -m scripts.train_rl_full --config $(CONFIG) --run-id $(PHASE5_RUN_ID) --init-seed $(PHASE5_INIT_SEED) $(if $(filter-out 0,$(PHASE5_MAX_ENV_STEPS)),--max-env-steps $(PHASE5_MAX_ENV_STEPS),)
+
+# All three training runs. Sequential on purpose so the learning curves
+# are reproducible and the CPU isn't swamped.
+phase5-train-all:
+	$(MAKE) phase5-train PHASE5_INIT_SEED=7  PHASE5_RUN_ID=phase5_rl_seed7
+	$(MAKE) phase5-train PHASE5_INIT_SEED=11 PHASE5_RUN_ID=phase5_rl_seed11
+	$(MAKE) phase5-train PHASE5_INIT_SEED=13 PHASE5_RUN_ID=phase5_rl_seed13
+
+phase5-heldout:
+	$(PYTHON) -m scripts.phase5_heldout --config $(CONFIG) --run-id phase5/heldout \
+	  --rl-checkpoint rl_seed7=$(PHASE5_ROOT_DIR)/rl_seed7/policy_best_by_val.pt \
+	  --rl-checkpoint rl_seed11=$(PHASE5_ROOT_DIR)/rl_seed11/policy_best_by_val.pt \
+	  --rl-checkpoint rl_seed13=$(PHASE5_ROOT_DIR)/rl_seed13/policy_best_by_val.pt
+
+phase5-aggregate:
+	$(PYTHON) -m scripts.phase5_aggregate --run-dir $(PHASE5_HELDOUT_DIR)
+
+phase5-figs:
+	$(PYTHON) -m scripts.figs.phase5_training_curves \
+	  --run-dir $(PHASE5_ROOT_DIR)/rl_seed7 \
+	  --run-dir $(PHASE5_ROOT_DIR)/rl_seed11 \
+	  --run-dir $(PHASE5_ROOT_DIR)/rl_seed13 \
+	  --out $(PHASE5_ROOT_DIR)/training_curves.png
+	$(PYTHON) -m scripts.figs.phase5_heldout_comparison \
+	  --run-dir $(PHASE5_HELDOUT_DIR) \
+	  --out $(PHASE5_HELDOUT_DIR)/heldout_comparison.png
+	$(PYTHON) -m scripts.figs.phase5_pareto_with_rl \
+	  --sweep-dir $(PHASE3_RUN_DIR_FOR_PARETO) \
+	  --heldout-dir $(PHASE5_HELDOUT_DIR) \
+	  --out $(PHASE5_ROOT_DIR)/pareto_with_rl.png
+
+PHASE5_ROLLOUT_CHECKPOINT ?= $(PHASE5_ROOT_DIR)/rl_seed7/policy_best_by_val.pt
+phase5-rollouts:
+	$(PYTHON) -m scripts.phase5_rollout_dump --config $(CONFIG) \
+	  --run-id phase5/rollouts --checkpoint $(PHASE5_ROLLOUT_CHECKPOINT) \
+	  --seeds 200 203 210 225 240
+
+phase5-all: phase5-train-all phase5-heldout phase5-aggregate phase5-figs phase5-rollouts
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +
