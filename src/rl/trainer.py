@@ -101,6 +101,20 @@ class UpdateRecord:
 
 
 @dataclass
+class ValidationRecord:
+    """One row of the validation_log CSV."""
+
+    update: int
+    stage: int
+    env_steps_cumulative: int
+    num_seeds: int
+    mean_return: float
+    std_return: float
+    is_new_best: bool
+    best_mean_return_so_far: float
+
+
+@dataclass
 class EpisodeRollout:
     states: List[np.ndarray] = field(default_factory=list)
     actions: List[int] = field(default_factory=list)
@@ -204,6 +218,11 @@ def train(
     log_every: int = 1,
     rng_seed: Optional[int] = None,
     fixed_arrival_seed: Optional[int] = None,
+    validation_seeds: Optional[Iterable[int]] = None,
+    validation_num_jobs: Optional[int] = None,
+    validation_max_steps: Optional[int] = None,
+    validation_log: Optional[List["ValidationRecord"]] = None,
+    best_checkpoint_path: Optional[Path] = None,
 ) -> Tuple[MLPPolicy, List[UpdateRecord]]:
     """REINFORCE-with-baseline training loop.
 
@@ -230,6 +249,19 @@ def train(
     records: List[UpdateRecord] = []
     cumulative_steps = 0
     update_counter = 0
+
+    val_seed_list = list(validation_seeds) if validation_seeds is not None else None
+    val_num_jobs = (
+        validation_num_jobs
+        if validation_num_jobs is not None
+        else cfg.experiment.num_jobs
+    )
+    val_max_steps = (
+        validation_max_steps
+        if validation_max_steps is not None
+        else cfg.experiment.max_steps
+    )
+    best_mean_val = -float("inf")
 
     if checkpoint_dir is not None:
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -320,6 +352,47 @@ def train(
                     policy.state_dict(),
                     checkpoint_dir / f"policy_update_{update_counter:06d}.pt",
                 )
+
+            # Validation-pool evaluation on the configured cadence.
+            if (
+                val_seed_list is not None
+                and training_cfg.eval_every_updates > 0
+                and update_counter % training_cfg.eval_every_updates == 0
+            ):
+                val_stats = evaluate(
+                    cfg=cfg,
+                    policy=policy,
+                    seeds=val_seed_list,
+                    num_jobs=val_num_jobs,
+                    max_steps=val_max_steps,
+                )
+                is_new_best = val_stats["mean_return"] > best_mean_val
+                if is_new_best:
+                    best_mean_val = float(val_stats["mean_return"])
+                    if best_checkpoint_path is not None:
+                        best_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+                        torch.save(policy.state_dict(), best_checkpoint_path)
+                if validation_log is not None:
+                    validation_log.append(
+                        ValidationRecord(
+                            update=update_counter,
+                            stage=stage_idx,
+                            env_steps_cumulative=cumulative_steps,
+                            num_seeds=val_stats["num_episodes"],
+                            mean_return=val_stats["mean_return"],
+                            std_return=val_stats["std_return"],
+                            is_new_best=is_new_best,
+                            best_mean_return_so_far=best_mean_val,
+                        )
+                    )
+                if log_every:
+                    marker = "*" if is_new_best else " "
+                    print(
+                        f"    [val @ update {update_counter:4d}] "
+                        f"mean={val_stats['mean_return']:+8.3f} "
+                        f"(std {val_stats['std_return']:.3f}, n={val_stats['num_episodes']}) "
+                        f"best-so-far={best_mean_val:+8.3f} {marker}"
+                    )
 
             if max_env_steps is not None and cumulative_steps >= max_env_steps:
                 break
