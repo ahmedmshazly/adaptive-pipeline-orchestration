@@ -15,7 +15,7 @@ PYTEST ?= pytest
 RUN_ID_ARG := $(if $(RUN_ID),--run-id $(RUN_ID),)
 OUT_ROOT_ARG := $(if $(OUT_ROOT),--out-root $(OUT_ROOT),)
 
-.PHONY: help install test baseline baseline-train baseline-test sweep train figs clean phase2 phase2-aggregate phase2-figs phase2-sanity phase3 phase3-figs phase4-baseline phase4-smoke phase4-figs phase5-train phase5-train-all phase5-heldout phase5-aggregate phase5-figs phase5-rollouts phase5-all
+.PHONY: help install test baseline baseline-train baseline-test sweep train figs clean phase2 phase2-aggregate phase2-figs phase2-sanity phase3 phase3-figs phase4-baseline phase4-smoke phase4-figs phase5-train phase5-train-all phase5-heldout phase5-aggregate phase5-figs phase5-rollouts phase5-all phase6-smoke-v1 phase6-train-v1 phase6-train-all-v1 phase6-heldout-v1 phase6-aggregate-v1 phase6-rollouts-v1 phase6-figs-v1 phase6-all-v1
 
 help:
 	@echo "make install        - install python dependencies"
@@ -156,6 +156,67 @@ phase5-rollouts:
 	  --seeds 200 203 210 225 240
 
 phase5-all: phase5-train-all phase5-heldout phase5-aggregate phase5-figs phase5-rollouts
+
+# ---------------------------------------------------------------------------
+# Phase 6 V1 — richer 14-dim state (paper §6). Uses config/state_v2.yaml
+# as the canonical entry-config; every target respects CONFIG= override.
+# ---------------------------------------------------------------------------
+PHASE6_V1_ROOT_DIR := results/phase6_v1
+PHASE6_V1_CONFIG ?= config/state_v2.yaml
+PHASE6_INIT_SEED ?= 7
+PHASE6_V1_RUN_ID ?= phase6_v1/rl_seed$(PHASE6_INIT_SEED)
+PHASE6_MAX_ENV_STEPS ?= 0
+
+PHASE6_V1_SMOKE_RUN_ID ?= phase6_v1/smoke
+
+phase6-smoke-v1:
+	$(PYTHON) -m scripts.train_rl --config $(PHASE6_V1_CONFIG) \
+	  --run-id $(PHASE6_V1_SMOKE_RUN_ID) --stage 1 --max-env-steps 10000 \
+	  --batch-size 4 --log-every 5 --fixed-arrival-seed 300 --init-seed 7
+
+phase6-train-v1:
+	$(PYTHON) -m scripts.train_rl_full --config $(PHASE6_V1_CONFIG) \
+	  --run-id $(PHASE6_V1_RUN_ID) --init-seed $(PHASE6_INIT_SEED) \
+	  $(if $(filter-out 0,$(PHASE6_MAX_ENV_STEPS)),--max-env-steps $(PHASE6_MAX_ENV_STEPS),)
+
+phase6-train-all-v1:
+	$(MAKE) phase6-train-v1 PHASE6_INIT_SEED=7  PHASE6_V1_RUN_ID=phase6_v1/rl_seed7  CONFIG=$(PHASE6_V1_CONFIG)
+	$(MAKE) phase6-train-v1 PHASE6_INIT_SEED=11 PHASE6_V1_RUN_ID=phase6_v1/rl_seed11 CONFIG=$(PHASE6_V1_CONFIG)
+	$(MAKE) phase6-train-v1 PHASE6_INIT_SEED=13 PHASE6_V1_RUN_ID=phase6_v1/rl_seed13 CONFIG=$(PHASE6_V1_CONFIG)
+
+phase6-heldout-v1:
+	$(PYTHON) -m scripts.phase5_heldout --config $(PHASE6_V1_CONFIG) \
+	  --run-id phase6_v1/heldout \
+	  --rl-checkpoint rl_v1_seed7=$(PHASE6_V1_ROOT_DIR)/rl_seed7/policy_best_by_val.pt \
+	  --rl-checkpoint rl_v1_seed11=$(PHASE6_V1_ROOT_DIR)/rl_seed11/policy_best_by_val.pt \
+	  --rl-checkpoint rl_v1_seed13=$(PHASE6_V1_ROOT_DIR)/rl_seed13/policy_best_by_val.pt
+
+phase6-aggregate-v1:
+	$(PYTHON) -m scripts.phase5_aggregate --run-dir $(PHASE6_V1_ROOT_DIR)/heldout
+
+PHASE6_V1_ROLLOUT_CHECKPOINT ?= $(PHASE6_V1_ROOT_DIR)/rl_seed7/policy_best_by_val.pt
+phase6-rollouts-v1:
+	$(PYTHON) -m scripts.phase5_rollout_dump --config $(PHASE6_V1_CONFIG) \
+	  --run-id phase6_v1/rollouts --checkpoint $(PHASE6_V1_ROLLOUT_CHECKPOINT) \
+	  --seeds 200 203 210 225 240
+
+phase6-figs-v1:
+	$(PYTHON) -m scripts.figs.phase5_training_curves \
+	  --run-dir $(PHASE6_V1_ROOT_DIR)/rl_seed7 \
+	  --run-dir $(PHASE6_V1_ROOT_DIR)/rl_seed11 \
+	  --run-dir $(PHASE6_V1_ROOT_DIR)/rl_seed13 \
+	  --title "Phase-6 V1 training curves (14-dim state, 3 init seeds)" \
+	  --out $(PHASE6_V1_ROOT_DIR)/training_curves_v1.png
+	$(PYTHON) -m scripts.figs.phase5_heldout_comparison \
+	  --run-dir $(PHASE6_V1_ROOT_DIR)/heldout \
+	  --out $(PHASE6_V1_ROOT_DIR)/heldout/heldout_comparison_v1.png
+	$(PYTHON) -m scripts.figs.phase6_pareto_with_rl_v1 \
+	  --sweep-dir results/sweep_phase3 \
+	  --heldout-v1-dir $(PHASE6_V1_ROOT_DIR)/heldout \
+	  --heldout-phase5-dir results/phase5/heldout \
+	  --out $(PHASE6_V1_ROOT_DIR)/pareto_with_rl_v1.png
+
+phase6-all-v1: phase6-smoke-v1 phase6-train-all-v1 phase6-heldout-v1 phase6-aggregate-v1 phase6-figs-v1 phase6-rollouts-v1
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +
