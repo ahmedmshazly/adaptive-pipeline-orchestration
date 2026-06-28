@@ -276,3 +276,49 @@ penalty from Stage A2. The honest claim replaces "equivalent to Reflex" with
 "significantly, if slightly, worse than Reflex." rliable-style IQM + stratified
 bootstrap CIs + probability-of-improvement + performance profiles
 (`power_rliable.csv`) reported per Agarwal et al.
+
+---
+
+## Stage B-RL — does REINFORCE learn to scale on env_tight? NO (optimisation failure) [strong, finalising]
+
+Three training runs on env_tight (all seed 7), evaluated by greedy argmax (the
+deployed policy):
+- `rl_tight_seed7`         — curriculum, broken reward (counter_delta).
+- `rl_tight_fixedrisk_seed7` — curriculum, corrected reward (failed_jobs_delta).
+- `rl_tight_fixedrisk_flat_seed7` — NO curriculum (flat N=100), corrected reward.
+
+**Result (robust across all three):** the greedy policy is **100% Execute,
+byte-identical to always-execute**, with validation **bit-pinned at +79.833**
+(the always-execute value) from update 25 onward. Confirmed by direct action-
+histogram evaluation of the update-200 checkpoints (counter and fixedrisk both
+100% Execute, util 78.40 on seeds 200–209). Meanwhile `scale_when_blocked` beats
+always-execute by **+6.21 (50 seeds, p=0.033)** / +14.16 (these 10 seeds,
+p=0.027).
+
+So on env_tight, always-execute is **NOT** optimal (a simple, representable
+scaling policy is significantly better), yet REINFORCE converges to it anyway —
+regardless of reward correctness and regardless of the curriculum. This is an
+**optimisation failure**, a third mechanism distinct from the other two:
+
+| environment | is always-execute optimal? | does RL converge to it? | cause |
+|---|---|---|---|
+| benign default | YES (A3: all non-exec CI≤0) | yes | environment (trivial optimum) |
+| env_tight | NO (scaling pays +6.21, p=0.033) | **yes** | optimiser (weak/delayed gradient) |
+
+Mechanism: blocked states are ~10% of steps; Scale_Up has zero immediate value
+and slightly higher immediate cost (myopic gradient points away); the benefit is
+delayed and δ=0.99-discounted. The small net-positive long-horizon advantage is
+swamped by REINFORCE's return variance, so the policy never climbs out of the
+always-execute basin. The flat-schedule run rules out "the curriculum locked it
+in stage 1": even training directly at N=100, the greedy policy is always-execute
+from update 25.
+
+**Consequence for the paper.** The always-execute attractor has (at least) two
+distinct causes the paper conflates under "reward shape": (1) on the committed
+environment it is the *correct* optimum (environment-determined; RL succeeds);
+(2) on a contended environment it is *suboptimal* but REINFORCE still finds it
+(optimiser-determined; RL fails). "The reward shape determines the attractor" is
+wrong on both counts. Predicted escapes (next controls): PPO / actor-critic,
+entropy-boosted REINFORCE, or potential-based shaping that makes the scaling
+benefit immediate. [Final 50-seed numbers on the converged policies pending run
+completion.]
