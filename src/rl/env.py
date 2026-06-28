@@ -212,12 +212,10 @@ class OrchestrationEnv(gym.Env):
 
         # Measure ΔValue_t as the value of jobs that became completed
         # during this step.
-        completed_before = {
-            job.job_id for job in self._state.jobs if job.completed
-        }
         total_value_before = sum(
             job.value for job in self._state.jobs if job.completed
         )
+        failed_jobs_before = sum(1 for job in self._state.jobs if job.failed)
 
         # Execute one simulator tick. Use advance_one_step so action, task
         # progress, and events all fire in the canonical order.
@@ -228,11 +226,20 @@ class OrchestrationEnv(gym.Env):
             job.value for job in self._state.jobs if job.completed
         )
         delta_value = float(total_value_after - total_value_before)
+        failed_jobs_after = sum(1 for job in self._state.jobs if job.failed)
 
+        # Risk term. Two modes (cfg.rl.reward_risk_mode):
+        #   counter_delta     - Δ(normalised recent_failures). Phase-5/6
+        #                       default; does NOT telescope to the metric.
+        #   failed_jobs_delta - jobs newly failed this step; Σ_t = failed_jobs,
+        #                       so Σ_t r_t == the episode utility exactly.
         recent_failures_normalised = self._normalised_recent_failures()
-        delta_risk = float(
-            recent_failures_normalised - self._last_recent_failures_normalised
-        )
+        if self.cfg.rl.reward_risk_mode == "failed_jobs_delta":
+            delta_risk = float(failed_jobs_after - failed_jobs_before)
+        else:
+            delta_risk = float(
+                recent_failures_normalised - self._last_recent_failures_normalised
+            )
         self._last_recent_failures_normalised = recent_failures_normalised
 
         step_cost = float(cost_fn(self._state, action_name))

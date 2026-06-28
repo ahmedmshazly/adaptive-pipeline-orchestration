@@ -276,6 +276,20 @@ utility_agent:
 rl:
   algorithm: reinforce_with_baseline    # "reinforce_with_baseline" | "ppo"
   reward: shared_episode_utility        # uses utility.alpha/beta/gamma
+  # Risk term of the per-step reward (hardening fix, paper §4.3.3 audit):
+  #   counter_delta     - gamma * Δ(normalised recent_failures). This is the
+  #                       Phase-5/6 default. It does NOT telescope to the
+  #                       reported metric: the counter decays −1/step so
+  #                       Σ_t Δrisk ≈ 0 at episode end, while the metric
+  #                       penalises gamma * failed_jobs. The learner therefore
+  #                       trains with ≈ no failure penalty (see
+  #                       scripts/hardening/diag_reward_identity.py).
+  #   failed_jobs_delta - gamma * Δ(failed_jobs this step). Σ_t = gamma *
+  #                       failed_jobs, so Σ_t r_t == the episode utility
+  #                       EXACTLY. This is the corrected "shared utility".
+  # Default stays counter_delta so existing Phase-5/6 runs reproduce; the
+  # corrected re-runs pass failed_jobs_delta.
+  reward_risk_mode: counter_delta
   # Phase-4 notational lock: the RL discount factor is delta, not gamma
   # (paper §4.3, §5.6). Utility gamma stays as the failure-risk weight.
   delta_discount: 0.99

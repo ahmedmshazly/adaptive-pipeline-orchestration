@@ -323,6 +323,11 @@ class RLConfig:
     initialisation_seeds: Tuple[int, ...]
     eval_every_updates: int
     checkpoint_every_updates: int
+    # Risk term of the per-step reward. "counter_delta" (Phase-5/6 default,
+    # does not telescope to the metric) | "failed_jobs_delta" (telescopes to
+    # gamma*failed_jobs so Sum r_t == episode utility). Defaulted last so
+    # configs written before this field still load.
+    reward_risk_mode: str = "counter_delta"
 
 
 @dataclass(frozen=True)
@@ -714,6 +719,11 @@ def _validate(
             raise ValueError("rl.training_seeds overlaps rl.test_seeds")
         if val_set & test_set:
             raise ValueError("rl.validation_seeds overlaps rl.test_seeds")
+        if rl.reward_risk_mode not in {"counter_delta", "failed_jobs_delta"}:
+            raise ValueError(
+                f"unknown rl.reward_risk_mode: {rl.reward_risk_mode} "
+                "(expected 'counter_delta' or 'failed_jobs_delta')"
+            )
 
     if state_v2 is not None:
         valid_feature_sets = {"queue_and_forecast", "queue_and_forecast_and_gnn"}

@@ -128,12 +128,17 @@ def _bootstrap_ci(x: np.ndarray, n_boot: int = 10000, alpha: float = 0.05):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=Path, default=None,
+                        help="config path (default: config/default.yaml = benign env)")
     parser.add_argument("--seeds", nargs="*", type=int, default=[200, 201, 202, 203, 204])
     parser.add_argument("--every", type=int, default=20, help="probe every k-th step")
     parser.add_argument("--futures", type=int, default=16, help="MC futures per (state,action)")
+    parser.add_argument("--out", type=Path, default=Path("results/hardening/local_optimality.csv"))
     args = parser.parse_args()
 
-    cfg = load_config()
+    cfg = load_config(args.config) if args.config else load_config()
+    print(f"config: {args.config or 'config/default.yaml'} "
+          f"(config_name={cfg.meta.get('config_name')})")
     alt_actions = [a for a in ACTIONS if a != "Execute_Ready_Job"]
     future_seeds = list(range(args.futures))
 
@@ -189,7 +194,7 @@ def main() -> None:
               "environment, not the reward shape, determines the attractor. "
               "Phase-2 must vary the environment to separate the two.")
 
-    out = Path("results/hardening/local_optimality.csv")
+    out = args.out
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))

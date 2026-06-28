@@ -168,3 +168,70 @@ Next: Stage B — vary the environment (heavy-tail value, capacity-exceeding
 jobs, decision-dependent failure) and re-run the A3 probe; if always-execute
 stops being locally optimal there, the reward-shape claim is falsified and the
 honest claim is "scalar utility + benign env → trivial optimum."
+
+---
+
+## Stage B — vary the environment (Phase 2)
+
+Generator: `scripts/hardening/make_env_configs.py` → `config/env_{capacity,loadfail,cap_loadfail}.yaml`
+(full standalone configs; minimal documented diffs from default).
+
+**PRE-REGISTERED predictions (written before running the probes):**
+- `env_capacity` (DAG template with a 12-CPU 'heavy' task > base 10; needs one
+  Scale_Up to be feasible): **Scale_Up advantage CI entirely > 0** → always-
+  execute is NOT locally optimal. Confidence: high. If true, it proves the
+  environment (not the reward shape) determines the attractor.
+- `env_loadfail` (`per_node_bernoulli` 0.05 → concurrency raises failures):
+  genuinely uncertain. Lean: throughput still dominates at p=0.05, so caution
+  actions move toward 0 but may NOT clear it. A non-result here would itself be
+  informative (decision-dependent failure at this magnitude is not enough).
+- `env_cap_loadfail`: at least Scale_Up clears 0 (inherits the capacity break).
+
+Probe settings differ slightly from the benign run (every=30, futures=10 vs
+every=20/16) to fit the 600s foreground CPU cap; the qualitative CI>0 test is
+robust to this. Same probe seeds (200–204) for comparability.
+
+### Stage B results — environment variation
+
+Policy comparison (fast, true metric, 50 held-out seeds), `scale_when_blocked`
+and a cautious `throttle` policy vs `always_execute` (= the converged RL policy):
+
+| env | always_exec util | best non-exec policy | Δutil | Wilcoxon p | verdict |
+|---|---:|---|---:|---:|---|
+| default (benign) | 111.52 | scale_when_blocked 114.31 | +2.79 | 0.056 | execute ~optimal |
+| **env_tight** (base 6/8) | 82.85 | **scale_when_blocked 89.06** | **+6.21** | **0.033** | **scaling significantly pays** |
+| env_loadfail (per_node_bernoulli) | 91.19 | throttle 96.30 | +5.11 | 0.31 | caution pays, NOT sig (predicted) |
+| env_capacity (12-CPU task) | 9.37 | scale_when_blocked 9.57 | +0.19 | 0.34 | PATHOLOGICAL (jam) — discarded |
+
+Pre-registration outcome: env_tight prediction (scaling pays) CONFIRMED and
+significant; env_loadfail prediction (caution pays but not decisively at 0.05)
+CONFIRMED. env_capacity prediction was directionally right at the probe level
+(Scale_Up MC advantage +5.82, CI>0) but the variant is a do_action jam artifact
+(298/300 steps insufficient_resources, 0 completions) and is discarded — see the
+generator docstring. This is also a finding about my own probe: a large per-state
+advantage can come from un-jamming a pathological baseline, so the probe must be
+read alongside a whole-policy comparison.
+
+**Headline so far:** under the IDENTICAL reward, always-execute is near-optimal on
+the benign env but significantly beaten by a scaling policy on env_tight. This
+already refutes "the reward shape alone determines the attractor" — the
+environment does. The benign env has a trivial optimum; env_tight does not.
+
+### A1 reward fix (implemented + tested)
+
+`rl.reward_risk_mode` added (config-gated): `counter_delta` (default, Phase-5/6
+reproducing) vs `failed_jobs_delta` (risk reward = γ·Δfailed_jobs, so Σr_t == U
+exactly). `tests/test_reward_identity.py` pins both regimes (4 tests). 38 RL/
+config/regression tests pass; Phase-5 reproduction intact (default unchanged).
+
+### The decisive RL experiment (in progress)
+
+`make`-style: `train_rl_full --config config/env_tight.yaml --init-seed 7`.
+Question: does REINFORCE learn to scale on env_tight (where scaling pays +6.21)?
+Early read at update 100/400 (still curriculum stage 2): the policy is **still
+100% Execute, byte-identical to always_execute** (util 82.85). It locked into the
+stage-1 always-execute attractor. Pending: whether stage-3 (N=100, real
+contention) moves it. If it does NOT, the finding sharpens to "the always-execute
+attractor is sticky across the curriculum, persisting into regimes where a
+non-execute action provably pays" — an optimisation/curriculum result, testable
+against PPO and a flat (no-curriculum) schedule.
