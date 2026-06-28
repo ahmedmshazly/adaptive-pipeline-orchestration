@@ -373,3 +373,28 @@ Complete three-mechanism picture, all measured:
 
 "The reward shape determines the attractor" is wrong on all three counts.
 [Final action histograms + held-out numbers pending run completion.]
+
+
+### Stage E FINAL — PPO learns to scale; REINFORCE does not (env_tight, n=50 held-out)
+
+All three PPO seeds (best-by-val) evaluated by argmax on env_tight:
+
+| policy | utility | Δ vs always-exec | Wilcoxon p | Scale_Up % | completion |
+|---|---:|---:|---:|---:|---:|
+| always_execute | 82.85 | — | — | 0% | 0.416 |
+| scale_when_blocked (hand) | 89.06 | +6.21 | 0.033 | 10% | 0.447 |
+| REINFORCE (best of all variants) | 82.85 | +0.00 | — | 0% | 0.416 |
+| PPO seed 7 | 106.06 | **+23.21** | 1.5e-8 | 7% | 0.558 |
+| PPO seed 11 | 111.20 | **+28.35** | 1.6e-10 | 8% | 0.583 |
+| PPO seed 13 | 104.27 | **+21.42** | 7.2e-8 | 7% | 0.554 |
+
+All 3 PPO seeds learned a scaling policy that beats always-execute by +21..+28
+utility (p<1e-7) and beats the hand-crafted scale_when_blocked too. REINFORCE
+(curriculum/flat/+10x entropy, both reward modes, all seeds) never left
+always-execute. (The iter-100 snapshot caught PPO seed 7 pre-escape at +79.83;
+by the end all three had escaped.)
+
+**Definitive: the env_tight always-execute attractor is a REINFORCE-specific
+optimisation failure, removed by a stronger optimiser under the identical reward
+and environment.** Same reward + same env + better optimiser -> non-trivial,
+better policy. This kills "the reward shape determines the attractor."
