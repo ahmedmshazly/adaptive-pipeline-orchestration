@@ -38,6 +38,10 @@ from typing import List
 import numpy as np
 import torch
 
+# One thread per process so parallel runs don't oversubscribe (sim loop is
+# single-threaded; tiny MLP -> intra-op parallelism only thrashes).
+torch.set_num_threads(1)
+
 from src.config import load_config
 from src.rl.trainer import TrainConfig, UpdateRecord, ValidationRecord, train
 from src.run_artifacts import (

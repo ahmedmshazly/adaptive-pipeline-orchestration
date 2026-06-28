@@ -14,6 +14,10 @@ from typing import List
 
 import torch
 
+# One thread per process so N parallel runs use ~N cores, not N*4 (the sim loop
+# is single-threaded; the MLP is tiny, so intra-op parallelism only thrashes).
+torch.set_num_threads(1)
+
 from src.config import load_config
 from src.rl.ppo import PPOConfig, PPORecord, train_ppo
 from src.run_artifacts import ensure_run_dir, write_manifest, write_resolved_config
