@@ -92,9 +92,12 @@ def _metrics(cfg, factory, seeds):
 
 
 def main() -> None:
+    import csv as _csv
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", nargs="*", type=int, default=list(range(200, 250)))
+    ap.add_argument("--csv", type=Path, default=Path("results/hardening/taxonomy.csv"))
     args = ap.parse_args()
+    csv_rows: List[dict] = []
 
     for env_cfg, hand_cls, rl_globs in MATRIX:
         cfg = load_config(Path(env_cfg))
@@ -105,24 +108,29 @@ def main() -> None:
 
         ae_u, ae_f, ae_c = _metrics(cfg, lambda c: AlwaysExecute(c), seeds)
         ae_x = _exec_frac(cfg, AlwaysExecute(cfg), seeds)
-        def row(name, u, f, c, x, base=None):
+        env_name = cfg.meta.get("config_name")
+        def row(name, u, f, c, x, base=None, algo=""):
             lo, hi = np.percentile(u, [2.5, 97.5])
-            d = "" ; p = ""
+            d = "" ; p = ""; dval = 0.0; pval = float("nan")
             if base is not None:
-                d = f"{u.mean()-base.mean():+.1f}"
-                try: p = f"{wilcoxon(u, base).pvalue:.1e}"
+                dval = float(u.mean() - base.mean()); d = f"{dval:+.1f}"
+                try: pval = float(wilcoxon(u, base).pvalue); p = f"{pval:.1e}"
                 except ValueError: p = "nan"
             print(f"{name:<34}{u.mean():>9.1f}{('['+format(lo,'.1f')+','+format(hi,'.1f')+']'):>20}"
                   f"{f.mean():>7.3f}{c.mean():>7.3f}{x:>7.2f}{d:>8}{p:>9}")
-        row("always_execute", ae_u, ae_f, ae_c, ae_x)
+            csv_rows.append({"env": env_name, "policy": name, "algo": algo,
+                             "util": round(float(u.mean()), 3), "delta_vs_ae": round(dval, 3),
+                             "p": pval, "exec_frac": round(float(x), 4),
+                             "fail": round(float(f.mean()), 4), "compl": round(float(c.mean()), 4)})
+        row("always_execute", ae_u, ae_f, ae_c, ae_x, algo="baseline")
         hand = hand_cls(cfg)
         h_u, h_f, h_c = _metrics(cfg, lambda c: hand_cls(c), seeds)
-        row(f"{hand.name} (hand)", h_u, h_f, h_c, _exec_frac(cfg, hand, seeds), ae_u)
+        row(f"{hand.name} (hand)", h_u, h_f, h_c, _exec_frac(cfg, hand, seeds), ae_u, algo="hand")
 
         for algo, pattern in rl_globs.items():
             dirs = []
             for pat in pattern.split():
-                dirs += sorted(glob.glob(pat))
+                dirs += [d for d in sorted(glob.glob(pat)) if Path(d).is_dir()]
             for d in dirs:
                 ckpt = Path(d) / "policy_best_by_val.pt"
                 if not ckpt.exists():
@@ -134,7 +142,13 @@ def main() -> None:
                     print(f"{algo} {Path(d).name:<22} [load failed: {e}]"); continue
                 u, f, c = _metrics(cfg, lambda cc, p=pol: RLPolicyAgent(cc, p, deterministic=True), seeds)
                 x = _exec_frac(cfg, RLPolicyAgent(cfg, pol, deterministic=True), seeds)
-                row(f"{algo}:{Path(d).name.split('_')[-1]}", u, f, c, x, ae_u)
+                row(f"{algo}:{Path(d).name.split('_')[-1]}", u, f, c, x, ae_u, algo=algo)
+
+    args.csv.parent.mkdir(parents=True, exist_ok=True)
+    with args.csv.open("w", newline="", encoding="utf-8") as h:
+        w = _csv.DictWriter(h, fieldnames=["env", "policy", "algo", "util", "delta_vs_ae", "p", "exec_frac", "fail", "compl"])
+        w.writeheader(); w.writerows(csv_rows)
+    print(f"\nwrote {args.csv} ({len(csv_rows)} rows)")
 
 
 if __name__ == "__main__":
