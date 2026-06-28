@@ -104,16 +104,17 @@ no-ops in blocked states, whereas Reflex scales/defers there.
 agreement 93.6%**, Reflex consistently slightly ahead (cost 786 vs 766, failure
 0.155 vs 0.145).
 
-**Revision:** "The learned policy is deterministic always-execute. On the held-
-out pool it is close to, but distinct from, Reflex (which scales or defers in
-the blocked/idle states where always-execute no-ops); the two differ in realised
-effect on ~6.4% of steps, with Reflex slightly ahead on every throughput-
-adjacent metric. The paired difference does not reach significance at n=50
-(p=0.08), but this is a failure to reject under limited power, not evidence of
-equivalence." If the power analysis (§ Stage D) makes it significant, state:
-"RL is slightly but significantly worse than Reflex — an entropy-free
-deterministic gap, not a sampling artefact." Replace any "equivalence" language
-with a TOST equivalence test against a pre-specified margin, or drop it.
+**Revision (now settled by the power analysis):** the power check was run on a
+pre-registered disjoint pool (n=250, seeds 1000–1249). Result: RL−Reflex =
+**−3.06, Wilcoxon p=2.3e-3 (significant)**; power at n=50 was only **0.288**, so
+the Phase-5 p=0.08 was an underpowered failure-to-reject. The corrected wording:
+"The learned policy is deterministic always-execute; it differs from Reflex
+(which scales/defers where always-execute no-ops) on ~6.4% of steps. On an
+adequately powered held-out pool (n=250) RL is **significantly but slightly
+worse** than Reflex (−3.06 utility, p=2.3e-3; TOST-equivalent within ±5 but not
+±3). The Phase-5 'matches Reflex within sampling noise (p=0.08)' was an
+underpowered failure-to-reject (28.8% power at n=50), not evidence of
+equivalence." Drop every "equivalent"/"indistinguishable" phrasing.
 
 ---
 

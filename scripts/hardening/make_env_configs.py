@@ -103,12 +103,28 @@ def _tight_fixedrisk(raw: dict) -> dict:
     return raw
 
 
+def _tight_fixedrisk_flat(raw: dict) -> dict:
+    """Both confounds removed AND no curriculum: train directly at the hard
+    regime (N=100, T=300) the whole time. This is the control for the
+    curriculum-stickiness hypothesis. If this learns to scale but the
+    curriculum runs do not, the curriculum locked the policy into the
+    stage-1 always-execute attractor. If even this stays at always-execute,
+    the attractor is deeper than the schedule."""
+    raw = _tight_fixedrisk(raw)
+    raw["meta"]["config_name"] = "env_tight_fixedrisk_flat"
+    raw["rl"]["curriculum"]["stages"] = [
+        {"num_jobs": 100, "max_steps": 300, "num_updates": 200}
+    ]
+    return raw
+
+
 VARIANTS = {
     "env_tight": _tight,
     "env_loadfail": _loadfail,
     "env_tight_loadfail": _tight_loadfail,
     "env_fixedrisk": _fixedrisk,
     "env_tight_fixedrisk": _tight_fixedrisk,
+    "env_tight_fixedrisk_flat": _tight_fixedrisk_flat,
 }
 
 HEADER = (
