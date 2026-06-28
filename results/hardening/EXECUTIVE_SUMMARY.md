@@ -16,7 +16,7 @@ is **false in every case**, for **three different reasons**:
 |---|---:|---:|---|---|---|
 | benign default (none) | 111.5 | 114.3 (+2.8) | — | **~always-exec (+1, ~100% exec)** | ENVIRONMENT: trivial optimum; RL correctly does not scale |
 | env_tight (scale +6.2) | 82.8 | 89.1 | **stuck, +0.0 all 3** | **+21,+28,+23 (p<1e-7)** | OPTIMISER: REINFORCE too weak; PPO finds it |
-| env_heavytail_tight (scale +18.5) | 451.6 | 470.0 | **stuck, +0.0 all 3** | (finishing) | OPTIMISER: even a 3× bigger lever doesn't rescue REINFORCE |
+| env_heavytail_tight (scale +18.5) | 451.6 | 470.0 | **stuck, +0.0 all 3** | **+14.3,+14.7 (2/3); seed7 −1.3** | OPTIMISER: PPO escapes 2/3; whale variance impedes the 3rd |
 | env_cascade, fixed reward (caution +120) | 21.0 | 34.1 | **+120 (p=1e-15), fail 51%→5%** | **+97..+122** | adequate reward+lever → RL succeeds |
 | env_cascade, broken reward (A1 bug) | 21.0 | 34.1 | **stuck reckless, +0.0** | only +18 (partial) | REWARD BUG: removes the direct failure signal |
 
