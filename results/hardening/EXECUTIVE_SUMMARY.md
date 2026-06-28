@@ -8,20 +8,28 @@ committed script, not an assertion.
 ## The one-line reframe
 
 The paper claims: *"the reward shape — not the algorithm and not the observation
-— determines the always-execute attractor."* The evidence says it is **false in
-every case tested**, for three *different* reasons depending on the environment:
+— determines the always-execute attractor."* The evidence (full measured table:
+`taxonomy_table.txt`; all on 50 held-out seeds, true metric, multi-seed) says it
+is **false in every case**, for **three different reasons**:
 
-| environment | non-exec action pays? | REINFORCE | stronger method / fixed reward | cause |
-|---|---|---|---|---|
-| benign default | no — always-exec is optimal (A3) | always-exec (correct) | — | the ENVIRONMENT (trivial optimum) |
-| env_tight (scaling +6) | yes, small lever | always-exec (stuck) | **PPO learns it, +21..+28, p<1e-7** | the OPTIMISER (REINFORCE weakness) |
-| env_cascade, broken reward | yes, large lever | always-exec (reckless, 51% fail) | — | the REWARD BUG (A1) |
-| env_cascade, fixed reward | yes, large lever | **learns caution, +120, p=1e-15** | — | adequate → RL succeeds |
+| environment (lever) | always-exec util | hand ref | REINFORCE (3 seeds) | PPO (3 seeds) | what determines it |
+|---|---:|---:|---|---|---|
+| benign default (none) | 111.5 | 114.3 (+2.8) | — | **~always-exec (+1, ~100% exec)** | ENVIRONMENT: trivial optimum; RL correctly does not scale |
+| env_tight (scale +6.2) | 82.8 | 89.1 | **stuck, +0.0 all 3** | **+21,+28,+23 (p<1e-7)** | OPTIMISER: REINFORCE too weak; PPO finds it |
+| env_heavytail_tight (scale +18.5) | 451.6 | 470.0 | **stuck, +0.0 all 3** | (finishing) | OPTIMISER: even a 3× bigger lever doesn't rescue REINFORCE |
+| env_cascade, fixed reward (caution +120) | 21.0 | 34.1 | **+120 (p=1e-15), fail 51%→5%** | **+97..+122** | adequate reward+lever → RL succeeds |
+| env_cascade, broken reward (A1 bug) | 21.0 | 34.1 | **stuck reckless, +0.0** | only +18 (partial) | REWARD BUG: removes the direct failure signal |
 
 So the honest contribution is a **taxonomy of why a scalar-utility scheduler can
-look trivial** (trivial environment / weak optimiser / mis-specified reward), not
-a single "reward-shape failure mode." In every cell where a non-execute action
-genuinely pays and the reward+optimiser are adequate, RL learns it.
+look trivial**: (1) the *environment* has a trivial optimum, (2) the *optimiser*
+(REINFORCE) is too weak to find a real but modest improvement, or (3) the
+*reward* is mis-specified (A1). None is "the reward shape." In every cell where a
+non-execute action genuinely pays and the reward+optimiser are adequate, RL
+learns it — and PPO *adapts*: it stays at always-execute on the benign env
+(correct) and scales hard only where scaling pays. The cascade-broken cell is the
+sharpest single demonstration that the A1 fix is material: same env, same
+REINFORCE, the fix turns reckless-always-execute (51% failure, util 21) into a
+caution policy (5% failure, util 141).
 
 ## What was claimed vs what is true
 
