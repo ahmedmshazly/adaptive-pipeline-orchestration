@@ -166,6 +166,14 @@ class WorkloadConfig:
     deadline_steps_high: int
     job_value_low: float
     job_value_high: float
+    # Heavy-tailed value (hardening — a value-heterogeneity lever). When
+    # value_distribution == "heavy_tail", each job is a "whale" of value
+    # heavy_tail_value with probability heavy_tail_prob, else U(low, high).
+    # Default "uniform" leaves the RNG draw sequence unchanged so Phase-5/6
+    # reproduce bit-for-bit. Defaulted last so existing configs load.
+    value_distribution: str = "uniform"
+    heavy_tail_prob: float = 0.0
+    heavy_tail_value: float = 50.0
 
 
 @dataclass(frozen=True)
@@ -705,6 +713,11 @@ def _validate(
     }:
         raise ValueError(
             "Execute_Ready_Job.selection_policy must be 'value' or 'value_times_priority'"
+        )
+
+    if simulator.workload.value_distribution not in {"uniform", "heavy_tail"}:
+        raise ValueError(
+            f"unknown workload.value_distribution: {simulator.workload.value_distribution}"
         )
 
     missing_action_costs = set(simulator.actions) - set(simulator.cost.action_costs)

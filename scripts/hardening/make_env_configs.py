@@ -176,6 +176,27 @@ def _tight_fixedrisk_flat_hientropy(raw: dict) -> dict:
     return raw
 
 
+def _heavytail_tight(raw: dict) -> dict:
+    """Heavy-tailed value (10% whales worth 50) + tight capacity + corrected
+    reward + 14-dim richer state (so the policy can SEE per-job value). Scaling
+    to finish whales pays +18.5 (p=0.026) -- a larger lever than env_tight's +6,
+    smaller than env_cascade's +120. Tests where the REINFORCE-success threshold
+    lies and whether the 14-dim state enables value-aware scaling."""
+    raw = _tight(raw)
+    raw["meta"]["config_name"] = "env_heavytail_tight"
+    w = raw["simulator"]["workload"]
+    w["value_distribution"] = "heavy_tail"
+    w["heavy_tail_prob"] = 0.1
+    w["heavy_tail_value"] = 50.0
+    raw["rl"]["reward_risk_mode"] = "failed_jobs_delta"
+    raw["state_v2"]["use_richer_state"] = True
+    raw["state_v2"]["queue_features"]["job_value_max"] = 50.0
+    raw["rl"]["curriculum"]["stages"] = [
+        {"num_jobs": 100, "max_steps": 300, "num_updates": 150}
+    ]
+    return raw
+
+
 VARIANTS = {
     "env_tight": _tight,
     "env_loadfail": _loadfail,
@@ -186,6 +207,7 @@ VARIANTS = {
     "env_tight_fixedrisk_flat_hientropy": _tight_fixedrisk_flat_hientropy,
     "env_cascade": _cascade,
     "env_cascade_broken": _cascade_broken,
+    "env_heavytail_tight": _heavytail_tight,
 }
 
 HEADER = (

@@ -389,9 +389,21 @@ class WorkloadGenerator:
                 high=workload.deadline_steps_high + 1,
             )
         )
-        job_value = round(
-            float(self.rng.uniform(workload.job_value_low, workload.job_value_high)), 2
-        )
+        # Value draw. The "uniform" branch is byte-identical to the original
+        # (one uniform draw) so Phase-5/6 seeds reproduce; the "heavy_tail"
+        # branch draws an extra Bernoulli first, making a fraction of jobs
+        # high-value "whales".
+        if workload.value_distribution == "heavy_tail":
+            if float(self.rng.random()) < workload.heavy_tail_prob:
+                job_value = float(workload.heavy_tail_value)
+            else:
+                job_value = round(
+                    float(self.rng.uniform(workload.job_value_low, workload.job_value_high)), 2
+                )
+        else:
+            job_value = round(
+                float(self.rng.uniform(workload.job_value_low, workload.job_value_high)), 2
+            )
 
         return JobInstance(
             job_id=job_id,
