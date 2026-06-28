@@ -235,3 +235,44 @@ contention) moves it. If it does NOT, the finding sharpens to "the always-execut
 attractor is sticky across the curriculum, persisting into regimes where a
 non-execute action provably pays" — an optimisation/curriculum result, testable
 against PPO and a flat (no-curriculum) schedule.
+
+---
+
+## Stage D — power analysis (the equivalence does NOT survive) [CONFIRMED]
+
+Script: `scripts/hardening/diag_power_rliable.py`
+Data: `results/hardening/power_rliable.csv`, `power_rliable_perseed.csv`
+
+The committed test pool is 50 seeds; the Phase-5 RL−Reflex test was p=0.08.
+Re-evaluated on a **pre-registered, disjoint, larger pool (seeds 1000–1249,
+n=250**, outside train 300–999 / val 250–299 / test 200–249), existing Phase-5
+checkpoint, deterministic argmax, benign config.
+
+Pre-registered prediction (written before running): the −4 gap holds and becomes
+significant; "equivalence" does not survive. **Outcome: confirmed.**
+
+| quantity | value |
+|---|---|
+| RL mean util | 125.47 [121.90, 129.00] |
+| Reflex mean util | 128.53 [124.92, 132.02] |
+| RL IQM | 124.95 [120.54, 129.43] |
+| Reflex IQM | 129.42 [124.98, 133.74] |
+| paired mean diff (RL−Reflex) | **−3.06 [−4.94, −1.19]** |
+| Wilcoxon p | **2.3e-03** |
+| paired t p | 1.6e-03 |
+| P(RL > Reflex) | 0.456 [0.404, 0.508] |
+| wins RL / Reflex / tie | 78 / 100 / 72 |
+| **power at n=50** | **0.288** |
+| power at n=250 | 0.889 |
+| n for 80% power | 195 |
+| TOST equivalent at ±3 / ±5 / ±10 | False / True / True |
+
+**Verdict:** at adequate power, **RL is significantly worse than Reflex** on
+total utility (−3.06, p=2.3e-3). The Phase-5 "matches Reflex within sampling
+noise (p=0.08)" was an underpowered failure-to-reject (28.8% power at n=50). The
+gap is *small* (significant outside ±3, equivalent within ±5) — i.e. RL is
+*significantly but slightly* worse, the deterministic no-op-in-blocked-states
+penalty from Stage A2. The honest claim replaces "equivalent to Reflex" with
+"significantly, if slightly, worse than Reflex." rliable-style IQM + stratified
+bootstrap CIs + probability-of-improvement + performance profiles
+(`power_rliable.csv`) reported per Agarwal et al.
