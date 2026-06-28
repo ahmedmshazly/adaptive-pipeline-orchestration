@@ -82,10 +82,33 @@ def _tight_loadfail(raw: dict) -> dict:
     return raw
 
 
+def _fixedrisk(raw: dict) -> dict:
+    """Benign env + corrected reward (Sum r_t == U). Tests whether always-
+    execute survives once the failure penalty is actually present in the
+    reward (prediction: yes, because benign-env failures are
+    decision-independent)."""
+    raw = copy.deepcopy(raw)
+    raw["meta"]["config_name"] = "env_fixedrisk"
+    raw["rl"]["reward_risk_mode"] = "failed_jobs_delta"
+    return raw
+
+
+def _tight_fixedrisk(raw: dict) -> dict:
+    """Both confounds removed: the env rewards a non-execute action AND the
+    reward is correctly specified. The cleanest test of whether RL learns
+    non-trivial behaviour when it genuinely should."""
+    raw = _tight(raw)
+    raw["meta"]["config_name"] = "env_tight_fixedrisk"
+    raw["rl"]["reward_risk_mode"] = "failed_jobs_delta"
+    return raw
+
+
 VARIANTS = {
     "env_tight": _tight,
     "env_loadfail": _loadfail,
     "env_tight_loadfail": _tight_loadfail,
+    "env_fixedrisk": _fixedrisk,
+    "env_tight_fixedrisk": _tight_fixedrisk,
 }
 
 HEADER = (

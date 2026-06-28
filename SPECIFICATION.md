@@ -307,6 +307,37 @@ boundary empirically. The two committed runs
 (`results/canonical_midterm/`, `results/phase1_baseline/`) are the
 before/after anchors for that study.
 
+### 5.4 Per-step RL reward and the risk-term identity
+
+The Self-Learning agent is trained on a per-step reward whose undiscounted sum
+is intended to equal the episode utility of §5. Decomposed:
+
+```
+r_t = alpha * dValue_t  -  beta * cost(s_t, a_t)  -  gamma * dRisk_t
+```
+
+- `dValue_t` = value of jobs newly completed at step `t`. Sums to
+  `total_completed_value` (telescopes exactly).
+- `cost(s_t, a_t)` = the §4 cost. Sums to `total_compute_cost` (exact).
+- `dRisk_t` depends on `rl.reward_risk_mode`:
+  - **`counter_delta`** (default; the Phase-5/6 behaviour): the change in the
+    normalised `recent_failures` counter. Because that counter decays −1 every
+    step, `Σ_t dRisk_t` telescopes to its end-of-episode value (≈0), **not** to
+    `failed_jobs`. So with this mode `Σ_t r_t ≠ U`: the learner sees a near-zero
+    failure penalty even though the metric charges `gamma * failed_jobs`. This
+    is a known mis-specification documented during the hardening pass
+    (`scripts/hardening/diag_reward_identity.py`); the default is retained only
+    so existing Phase-5/6 results reproduce bit-for-bit.
+  - **`failed_jobs_delta`** (corrected): the number of jobs that newly entered
+    the `failed` state at step `t`. `Σ_t dRisk_t = failed_jobs`, so
+    `Σ_t r_t = U` exactly. This is the mode to use for any run that claims the
+    learner optimises the evaluation objective. Pinned by
+    `tests/test_reward_identity.py`.
+
+Note the separate, standard gap that the *training* return is discounted
+(`δ = rl.delta_discount = 0.99`) while the metric is undiscounted; the identity
+above is for the undiscounted sum.
+
 ---
 
 ## 6. Where this spec lives in code
