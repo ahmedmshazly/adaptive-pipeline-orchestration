@@ -8,11 +8,20 @@ committed script, not an assertion.
 ## The one-line reframe
 
 The paper claims: *"the reward shape — not the algorithm and not the observation
-— determines the always-execute attractor."* The evidence says: **the benign
-environment determines it.** On the committed environment, always-execute is the
-genuine optimum of the true objective; an RL agent finding it is success, not a
-failure mode. The defensible paper is *"benign env + scalar reward → trivial
-optimum that RL correctly finds,"* shown by varying the environment.
+— determines the always-execute attractor."* The evidence says it is **false in
+every case tested**, for three *different* reasons depending on the environment:
+
+| environment | non-exec action pays? | REINFORCE | stronger method / fixed reward | cause |
+|---|---|---|---|---|
+| benign default | no — always-exec is optimal (A3) | always-exec (correct) | — | the ENVIRONMENT (trivial optimum) |
+| env_tight (scaling +6) | yes, small lever | always-exec (stuck) | **PPO learns it, +21..+28, p<1e-7** | the OPTIMISER (REINFORCE weakness) |
+| env_cascade, broken reward | yes, large lever | always-exec (reckless, 51% fail) | — | the REWARD BUG (A1) |
+| env_cascade, fixed reward | yes, large lever | **learns caution, +120, p=1e-15** | — | adequate → RL succeeds |
+
+So the honest contribution is a **taxonomy of why a scalar-utility scheduler can
+look trivial** (trivial environment / weak optimiser / mis-specified reward), not
+a single "reward-shape failure mode." In every cell where a non-execute action
+genuinely pays and the reward+optimiser are adequate, RL learns it.
 
 ## What was claimed vs what is true
 
@@ -37,25 +46,31 @@ optimum that RL correctly finds,"* shown by varying the environment.
 - README rewritten to match reality (was describing the abandoned v0).
 - `SPECIFICATION.md` §5.4 documents the reward identity.
 
-## The decisive open experiment (in progress)
+## The decisive experiments — RESOLVED
 
-Does REINFORCE *itself* learn to scale on `env_tight`, where scaling pays
-+6.21? Three runs (curriculum / curriculum+corrected-reward / flat no-curriculum,
-all seed 7). Early reads (updates 100–250): **still 100% Execute, byte-identical
-to always-execute**, validation pinned at the always-execute value. If this holds
-at convergence, the finding sharpens to: *"the always-execute attractor is
-sticky across the curriculum, persisting into a regime where a non-execute action
-provably pays"* — an optimisation result, separable from reward shape by the flat
-schedule and (next) an entropy/PPO control. **[Final verdict pending run
-completion — see LOG.md Stage B-RL.]**
+- **env_tight, REINFORCE (4 variants: curriculum, +corrected reward, flat
+  no-curriculum, +10× entropy; all seeds):** every one converges to 100%
+  always-execute, even though a scaling policy pays +6.21 on both the
+  undiscounted utility (p=0.033) and the discounted training return (+2.06,
+  p=0.012). So it is not a discount artifact — it is a genuine optimisation
+  failure.
+- **env_tight, PPO (3 seeds):** all three learn to scale and beat always-execute
+  by **+21 to +28 utility (p<1e-7)**, beating the hand-crafted scaler too. A
+  stronger optimiser removes the attractor under the identical reward and
+  environment → the env_tight result is REINFORCE-specific.
+- **env_cascade (caution pays), broken vs fixed reward:** with the Phase-5/6
+  reward, RL = reckless always-execute (51% failure, util 21); with the A1 fix,
+  RL learns caution (4.6% failure, util 141; +120, p=1e-15). The reward bug is
+  material.
 
-## What a hostile reviewer should still demand (honest gaps)
+## What a hostile reviewer could still demand (remaining gaps)
 
-- PPO / actor-critic on the same env+reward (algorithm-independence is asserted,
-  not shown). Cheap intermediate: entropy-boosted REINFORCE.
-- CMDP/RCPO corrective — but note the analytical catch: a CMDP does **not** fix a
-  benign environment (no caution lever to satisfy a constraint over), so the
-  paper's "CMDP is the corrective" is itself mis-targeted; the corrective for a
-  trivial optimum is a richer *environment*, not a reward reformulation.
-- Heavy-tailed value (needs a workload-generator mixture; config-only variants
-  done for capacity and load-failure).
+- PPO/CMDP on the *cascade* env (REINFORCE already learns it; PPO and a CMDP
+  would likely both succeed — lower priority now that the mechanism is clear).
+- The CMDP "corrective" the paper promises: note the analytical catch — a CMDP
+  does **not** fix a benign environment (no caution lever to constrain), and on
+  a lever-bearing env a *better optimiser or the corrected scalar reward already
+  suffices*, so "CMDP is the unique corrective" is overstated. Worth softening.
+- Heavy-tailed value (needs a workload-generator mixture; the
+  capacity/load-failure/cascade levers were config- or small-code-only and were
+  done first).
