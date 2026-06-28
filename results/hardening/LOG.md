@@ -322,3 +322,20 @@ wrong on both counts. Predicted escapes (next controls): PPO / actor-critic,
 entropy-boosted REINFORCE, or potential-based shaping that makes the scaling
 benefit immediate. [Final 50-seed numbers on the converged policies pending run
 completion.]
+
+### Discounted-return check — optimisation failure, NOT a discount artifact [CONFIRMED]
+
+Script: `scripts/hardening/diag_discounted_return.py`. On env_tight (50 test
+seeds), scale_when_blocked vs always-execute on BOTH objectives:
+
+| objective | always_execute | scale_when_blocked | Δ | Wilcoxon p |
+|---|---:|---:|---:|---:|
+| undiscounted Σr (= utility) | 82.85 | 89.06 | **+6.21** | 0.033 |
+| discounted Σδ^t r (δ=0.99, the REINFORCE objective) | 31.40 | 33.47 | **+2.06** | **0.012** |
+
+Scaling wins on the *discounted training objective* too (more significantly than
+undiscounted). So discounting does not hide the benefit: REINFORCE's own
+objective prefers scaling, yet REINFORCE converges to always-execute. This rules
+out a discount/eval-mismatch explanation and confirms the env_tight attractor is
+a genuine **optimisation failure**. Capstone control (entropy_coef 0.01→0.1,
+`rl_tight_hientropy_seed7`) launched to test whether exploration escapes it.

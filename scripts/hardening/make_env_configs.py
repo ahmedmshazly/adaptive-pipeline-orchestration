@@ -118,6 +118,19 @@ def _tight_fixedrisk_flat(raw: dict) -> dict:
     return raw
 
 
+def _tight_fixedrisk_flat_hientropy(raw: dict) -> dict:
+    """Flat + corrected reward + 10x entropy coefficient (0.01 -> 0.1). The
+    capstone control for the optimisation-failure claim: if more exploration
+    escapes the always-execute basin and learns to scale, the env_tight
+    attractor is an exploration/optimisation failure (as the discounted-return
+    measurement implies). If even this stays at always-execute, the basin is
+    robust to exploration alone (still optimiser-determined, but harder)."""
+    raw = _tight_fixedrisk_flat(raw)
+    raw["meta"]["config_name"] = "env_tight_fixedrisk_flat_hientropy"
+    raw["rl"]["entropy_coef"] = 0.1
+    return raw
+
+
 VARIANTS = {
     "env_tight": _tight,
     "env_loadfail": _loadfail,
@@ -125,6 +138,7 @@ VARIANTS = {
     "env_fixedrisk": _fixedrisk,
     "env_tight_fixedrisk": _tight_fixedrisk,
     "env_tight_fixedrisk_flat": _tight_fixedrisk_flat,
+    "env_tight_fixedrisk_flat_hientropy": _tight_fixedrisk_flat_hientropy,
 }
 
 HEADER = (
