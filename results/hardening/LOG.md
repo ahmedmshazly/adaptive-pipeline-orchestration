@@ -398,3 +398,47 @@ by the end all three had escaped.)
 optimisation failure, removed by a stronger optimiser under the identical reward
 and environment.** Same reward + same env + better optimiser -> non-trivial,
 better policy. This kills "the reward shape determines the attractor."
+
+---
+
+## Stage F — load_cascade: the A1 reward fix MATTERS, and REINFORCE CAN learn caution [CONFIRMED]
+
+env_cascade (P(failure) jumps when cpu_load>0.4, so keeping load low pays).
+REINFORCE trained flat at N=100, two reward modes, evaluated on the true metric
+(50 held-out seeds):
+
+| policy | utility | failure rate | completion | Scale_Up % | Δ vs always-exec | p |
+|---|---:|---:|---:|---:|---:|---:|
+| always_execute | 21.0 | 0.508 | 0.434 | 0% | — | — |
+| throttle (hand) | 27.6 | 0.460 | 0.418 | 0% | +6.5 | 0.093 |
+| RL, BROKEN reward (counter_delta) | 21.0 | 0.508 | 0.434 | 0% | **+0.0** | — |
+| RL, FIXED reward (failed_jobs_delta) | **141.3** | **0.046** | 0.683 | 11% | **+120.3** | **1.8e-15** |
+
+Two findings in one experiment:
+1. **The A1 reward bug is material, not cosmetic.** With the broken reward
+   (the Phase-5/6 default), RL is byte-identical to reckless always-execute
+   (50.8% failure, util 21) because the reward never charges for failures. With
+   the corrected reward, RL learns a policy that cuts failures from 50.8% to
+   **4.6%** and lifts utility to 141 (+120, p=1.8e-15). Same env, same REINFORCE,
+   only the reward-term fix differs.
+2. **REINFORCE CAN learn a non-execute policy when the lever is large and the
+   reward is correct.** It failed on env_tight (small +6 lever) but succeeds here
+   (+120 lever) — and it discovered that Scale_Up does double duty (raises
+   capacity → lowers load fraction → dodges the cascade AND adds throughput),
+   beating the hand-crafted throttle by a wide margin.
+
+## Complete picture — four environments, one reward family
+
+| environment | does a non-exec action pay? | REINFORCE | PPO / fixed reward | what determines the outcome |
+|---|---|---|---|---|
+| benign default | no (always-exec is optimal, A3) | always-exec (correct) | — | the ENVIRONMENT (trivial optimum) |
+| env_tight (scaling +6) | yes, small | always-exec (STUCK) | **PPO learns it, +21..+28** | the OPTIMISER (REINFORCE weakness) |
+| env_cascade, broken reward | yes, large | always-exec (reckless) | — | the REWARD BUG (no failure signal) |
+| env_cascade, fixed reward | yes, large | **learns caution, +120** | — | adequate reward+lever → RL succeeds |
+
+"The reward shape determines the always-execute attractor" is false in every
+cell. The attractor appears for three *different* reasons — a trivial
+environment, a weak optimiser, and a mis-specified reward — and in every case
+where a non-execute action genuinely pays and the reward+optimiser are adequate,
+RL learns it. The honest contribution is a *taxonomy of why a scalar-utility
+scheduler can look trivial*, not a single "reward-shape failure mode."
