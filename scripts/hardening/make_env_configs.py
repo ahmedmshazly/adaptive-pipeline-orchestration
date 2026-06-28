@@ -118,6 +118,51 @@ def _tight_fixedrisk_flat(raw: dict) -> dict:
     return raw
 
 
+def _cascade_base(raw: dict) -> dict:
+    """Load-cascade failure: P(failure) jumps to high_prob when cpu_load >
+    load_threshold, else low_prob. Keeping load <= 0.4 (throttle/scale) reduces
+    failures, so caution PAYS (throttle beats always-execute +13.1, p=0.014).
+    Unlike per_step_single_victim / per_node_bernoulli, expected failures are
+    NOT policy-invariant here."""
+    raw = copy.deepcopy(raw)
+    nf = raw["simulator"]["stochastic_processes"]["node_failure"]
+    nf["mode"] = "load_cascade"
+    nf["load_threshold"] = 0.4
+    nf["high_prob"] = 0.4
+    nf["low_prob"] = 0.01
+    return raw
+
+
+def _cascade(raw: dict) -> dict:
+    """Cascade + CORRECTED reward (failed_jobs_delta). The lever is failure-
+    avoidance, so the reward must actually penalise failures for RL to have any
+    incentive to throttle. This is the real test."""
+    raw = _cascade_base(raw)
+    raw["meta"]["config_name"] = "env_cascade"
+    raw["rl"]["reward_risk_mode"] = "failed_jobs_delta"
+    # Flat schedule (train directly at N=100) so the caution lever is active
+    # throughout and the curriculum cannot pre-lock always-execute.
+    raw["rl"]["curriculum"]["stages"] = [
+        {"num_jobs": 100, "max_steps": 300, "num_updates": 150}
+    ]
+    return raw
+
+
+def _cascade_broken(raw: dict) -> dict:
+    """Cascade + BROKEN reward (counter_delta, the Phase-5/6 default). The
+    failure penalty is ≈0, so RL has no incentive to avoid the (now real)
+    cascade failures -> should ignore the caution lever. Pairing this with
+    env_cascade demonstrates that the A1 reward bug materially changes what RL
+    can learn."""
+    raw = _cascade_base(raw)
+    raw["meta"]["config_name"] = "env_cascade_broken"
+    raw["rl"]["reward_risk_mode"] = "counter_delta"
+    raw["rl"]["curriculum"]["stages"] = [
+        {"num_jobs": 100, "max_steps": 300, "num_updates": 150}
+    ]
+    return raw
+
+
 def _tight_fixedrisk_flat_hientropy(raw: dict) -> dict:
     """Flat + corrected reward + 10x entropy coefficient (0.01 -> 0.1). The
     capstone control for the optimisation-failure claim: if more exploration
@@ -139,6 +184,8 @@ VARIANTS = {
     "env_tight_fixedrisk": _tight_fixedrisk,
     "env_tight_fixedrisk_flat": _tight_fixedrisk_flat,
     "env_tight_fixedrisk_flat_hientropy": _tight_fixedrisk_flat_hientropy,
+    "env_cascade": _cascade,
+    "env_cascade_broken": _cascade_broken,
 }
 
 HEADER = (

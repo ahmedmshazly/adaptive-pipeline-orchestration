@@ -501,6 +501,20 @@ def _apply_node_failure(state: EpisodeState, rng: np.random.Generator) -> None:
         for full_id in running_ids:
             if rng.random() < config.prob:
                 _kill_running_task(state, full_id, cluster_cfg.max_recent_failures)
+    elif config.mode == "load_cascade":
+        # Per-step single victim, but the failure probability depends on load:
+        # high_prob when cpu_load > load_threshold, else low_prob. Keeping load
+        # moderate (throttle or scale-up) genuinely lowers expected failures, so
+        # caution PAYS here (unlike the two policy-invariant modes above).
+        if not state.running_tasks:
+            return
+        cpu_load = state.cpu_in_use() / max(state.cluster.cpu_capacity, 1)
+        prob = config.high_prob if cpu_load > config.load_threshold else config.low_prob
+        if rng.random() >= prob:
+            return
+        running_ids = list(state.running_tasks.keys())
+        victim_index = int(rng.integers(low=0, high=len(running_ids)))
+        _kill_running_task(state, running_ids[victim_index], cluster_cfg.max_recent_failures)
     else:
         raise ValueError(f"unknown node_failure mode: {config.mode}")
 

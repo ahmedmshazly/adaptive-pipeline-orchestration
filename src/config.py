@@ -84,8 +84,17 @@ class ActionParams:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class NodeFailureConfig:
-    mode: str          # "per_step_single_victim" | "per_node_bernoulli"
+    mode: str          # "per_step_single_victim" | "per_node_bernoulli" | "load_cascade"
     prob: float
+    # load_cascade params (hardening — a failure model where caution PAYS):
+    # when cpu_load > load_threshold the per-step single-victim failure prob is
+    # high_prob, else low_prob. Keeping load moderate (via throttle or scale-up)
+    # genuinely reduces expected failures, unlike the policy-invariant
+    # per_step_single_victim / per_node_bernoulli models. Defaulted so existing
+    # configs load unchanged.
+    load_threshold: float = 0.8
+    high_prob: float = 0.30
+    low_prob: float = 0.02
 
 
 @dataclass(frozen=True)
@@ -678,7 +687,7 @@ def _validate(
 ) -> None:
     """Cheap invariant checks so the loader fails fast on bad configs."""
     valid_modes = {
-        "node_failure": {"per_step_single_victim", "per_node_bernoulli"},
+        "node_failure": {"per_step_single_victim", "per_node_bernoulli", "load_cascade"},
         "data_spike": {"additive_bump", "multiplicative_10x"},
         "spot_price": {"bounded_random_walk"},
     }
