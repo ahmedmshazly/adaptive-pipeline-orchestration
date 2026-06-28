@@ -19,11 +19,8 @@ REINFORCE:seed7                        82.8        [48.9,118.1]  0.136  0.416   
 REINFORCE:seed11                       82.8        [48.9,118.1]  0.136  0.416   1.00    +0.0      nan
 REINFORCE:seed13                       82.8        [48.9,118.1]  0.136  0.416   1.00    +0.0      nan
 PPO:seed11                            111.2        [71.0,148.4]  0.147  0.583   0.93   +28.4  1.6e-10
-PPO ppo_tight_seed11.log   [no ckpt yet]
 PPO:seed13                            104.3        [55.3,150.4]  0.152  0.554   0.92   +21.4  7.2e-08
-PPO ppo_tight_seed13.log   [no ckpt yet]
 PPO:seed7                             106.1        [60.4,149.1]  0.150  0.558   0.93   +23.2  1.5e-08
-PPO ppo_tight_seed7.log    [no ckpt yet]
 
 ============================================================================================
 ENV: env_cascade  (config/env_cascade.yaml)  seeds 200..249 n=50
@@ -40,7 +37,6 @@ policy                                 util               95%CI   fail  compl  e
 always_execute                         21.0        [-31.2,59.7]  0.508  0.434   1.00                 
 throttle (hand)                        34.1         [-4.9,76.9]  0.391  0.377   0.81   +13.1  1.4e-02
 REINFORCE:seed7                        21.0        [-31.2,59.7]  0.508  0.434   1.00    +0.0      nan
-REINFORCE reinforce_cascade_broken_seed7.log [no ckpt yet]
 PPO:seed7                              39.0          [2.2,76.8]  0.437  0.460   0.96   +18.0  4.8e-06
 
 ============================================================================================
@@ -51,6 +47,8 @@ scale_when_blocked (hand)             470.0       [274.6,656.6]  0.131  0.448   
 REINFORCE:seed11                      451.6       [250.3,621.2]  0.130  0.417   1.00    +0.0      nan
 REINFORCE:seed13                      451.6       [250.3,621.2]  0.130  0.417   1.00    +0.0      nan
 REINFORCE:seed7                       451.6       [250.3,621.2]  0.130  0.417   1.00    +0.0      nan
-PPO ppo_heavytail_seed11   [no ckpt yet]
-PPO ppo_heavytail_seed13   [no ckpt yet]
-PPO ppo_heavytail_seed7    [no ckpt yet]
+PPO:seed11                            465.8       [265.0,652.0]  0.150  0.533   0.89   +14.3  2.6e-07
+PPO:seed13                            466.3       [279.1,643.3]  0.145  0.514   0.93   +14.7  7.9e-06
+PPO:seed7                             450.3       [249.6,621.2]  0.131  0.415   0.94    -1.3  2.7e-01
+
+wrote results/hardening/taxonomy.csv (30 rows)

@@ -442,3 +442,41 @@ environment, a weak optimiser, and a mis-specified reward — and in every case
 where a non-execute action genuinely pays and the reward+optimiser are adequate,
 RL learns it. The honest contribution is a *taxonomy of why a scalar-utility
 scheduler can look trivial*, not a single "reward-shape failure mode."
+
+---
+
+## Stage G — COMPLETE multi-seed taxonomy (final) [CONFIRMED]
+
+Scripts: `eval_taxonomy.py` (→ `taxonomy.csv`, `taxonomy_table.txt`),
+`fig_taxonomy.py` (→ `fig_taxonomy.png`). All on 50 held-out seeds, true metric,
+best-by-validation policies, 3 init seeds per cell.
+
+| environment (lever) | always-exec | hand ref | REINFORCE (3 seeds) | PPO (3 seeds) | determinant |
+|---|---:|---:|---|---|---|
+| benign default (none) | 111.5 | +2.8 | — | +0.8 / +1.0 / +1.5, **~100% exec** | ENVIRONMENT (trivial optimum; RL correctly does not scale) |
+| env_tight (scale +6.2) | 82.8 | +6.2 | **+0.0 / +0.0 / +0.0 (stuck)** | **+23.2 / +28.4 / +21.4 (p<1e-7)** | OPTIMISER (REINFORCE too weak; PPO escapes all 3) |
+| env_heavytail_tight (scale +18.5, high variance) | 451.6 | +18.5 | **+0.0 / +0.0 / +0.0 (stuck)** | **+14.3 / +14.7 (p<1e-5); seed7 −1.3 (stuck)** | OPTIMISER (PPO escapes 2/3; whale variance impedes the 3rd) |
+| env_cascade, fixed reward (caution +120) | 21.0 | +13.1 | **+120.3 (p=1e-15), fail 51%→5%** | **+97.5 / +122.4 (p=1e-15)** | adequate reward+lever → both succeed |
+| env_cascade, BROKEN reward (A1 bug) | 21.0 | +13.1 | **+0.0 (stuck reckless, 51% fail)** | +18.0 (partial, p=5e-6) | REWARD BUG removes the direct failure signal |
+
+**Final verdict — the paper's central claim is false in every cell.**
+"Always-execute" appears for three *distinct* reasons, none of which is the
+reward shape:
+1. **Environment** (benign): always-execute is the genuine optimum; every agent
+   that's any good stays there. RL is correct, not failing. PPO confirms it by
+   *not* scaling here (≈100% exec) even though it scales hard elsewhere — so PPO
+   genuinely adapts; it is not biased toward scaling.
+2. **Optimiser** (env_tight, heavytail): a non-execute action provably pays
+   (+6 to +18, significant), but vanilla REINFORCE never finds it (0/6 seeds
+   across the two envs). PPO finds it (5/6 seeds). The attractor is a property of
+   the *weak optimiser*, removed by a stronger one under the identical reward.
+3. **Reward** (cascade broken): the A1 risk-term bug removes the failure penalty,
+   so REINFORCE stays reckless (51% failure) and even PPO recovers only +18 (from
+   the indirect value signal) vs +122 with the corrected reward. The A1 fix is
+   material, most of all for the weaker optimiser (0 → +120).
+
+REINFORCE escapes only when the lever is enormous (cascade, +120); PPO escapes
+whenever a lever exists and the reward is correct, and correctly abstains when it
+does not. "The reward shape, not the algorithm, determines the attractor" is the
+exact opposite of what the data show: the *algorithm* (REINFORCE vs PPO) and the
+*environment* are the determinants, plus a reward-specification bug.
